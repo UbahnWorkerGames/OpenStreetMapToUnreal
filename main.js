@@ -114,6 +114,12 @@ let areaDragStart = null;
 let areaDraftRect = null;
 let areaFeatures = [];
 
+function getSelectedAreaCategories() {
+  return [...areaLayerVisibility.entries()]
+    .filter(([, visible]) => visible)
+    .map(([category]) => category);
+}
+
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
 
 function haversineM(a, b) {
@@ -897,17 +903,42 @@ function classifyAreaWay(tags = {}) {
   return null;
 }
 
-function buildAreaOverpassQuery(bounds) {
+function buildAreaOverpassQuery(bounds, categories) {
+  if (!Array.isArray(categories) || categories.length === 0) {
+    throw new Error("Keine Bereichs-Layer ausgewaehlt.");
+  }
   const bbox = [
     bounds.getSouth().toFixed(7),
     bounds.getWest().toFixed(7),
     bounds.getNorth().toFixed(7),
     bounds.getEast().toFixed(7),
   ].join(",");
+  const clauses = [];
+  if (categories.includes("motorway")) {
+    clauses.push(`way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"](${bbox});`);
+  }
+  if (categories.includes("major_road")) {
+    clauses.push(`way["highway"~"^(primary|primary_link|secondary|secondary_link)$"](${bbox});`);
+  }
+  if (categories.includes("city_road")) {
+    clauses.push(`way["highway"~"^(tertiary|tertiary_link|unclassified|residential|living_street|road)$"](${bbox});`);
+  }
+  if (categories.includes("service")) {
+    clauses.push(`way["highway"="service"](${bbox});`);
+  }
+  if (categories.includes("rail_tram")) {
+    clauses.push(`way["railway"="tram"](${bbox});`);
+  }
+  if (categories.includes("rail_train")) {
+    clauses.push(`way["railway"~"^(rail|light_rail)$"](${bbox});`);
+  }
+  if (categories.includes("rail_subway")) {
+    clauses.push(`way["railway"="subway"](${bbox});`);
+  }
+  if (!clauses.length) throw new Error("Ausgewaehlte Bereichs-Layer erzeugen keine Overpass-Abfrage.");
   return `[out:json][timeout:120];
 (
-  way["highway"](${bbox});
-  way["railway"~"^(tram|rail|subway|light_rail)$"](${bbox});
+  ${clauses.join("\n  ")}
 );
 out geom;`;
 }
@@ -1026,12 +1057,14 @@ function resamplePolylineBySpacing(poly, spacingM) {
   return result;
 }
 
-function buildAreaFeatures(data, bounds) {
+function buildAreaFeatures(data, bounds, categories = Object.keys(AREA_LAYER_LABELS)) {
+  const selectedCategories = new Set(categories);
   const features = [];
   for (const el of data.elements || []) {
     if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
     const category = classifyAreaWay(el.tags || {});
     if (!category) continue;
+    if (!selectedCategories.has(category)) continue;
 
     const rawGeometry = el.geometry.map((p) => [p.lat, p.lon]);
     const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
@@ -1954,11 +1987,17 @@ async function importAreaFromOverpass() {
   }
 
   try {
-    setStatus("Lade Strassen und Schienen fuer Bereich ...");
+    const selectedCategories = getSelectedAreaCategories();
+    if (!selectedCategories.length) {
+      setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
+      return;
+    }
+    const selectedLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+    setStatus(`Lade Bereich: ${selectedLabels} ...`);
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildAreaOverpassQuery(areaSelectionBounds),
+      body: buildAreaOverpassQuery(areaSelectionBounds, selectedCategories),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -1967,7 +2006,7 @@ async function importAreaFromOverpass() {
       throw new Error("Antwort ohne elements");
     }
 
-    areaFeatures = buildAreaFeatures(data, areaSelectionBounds);
+    areaFeatures = buildAreaFeatures(data, areaSelectionBounds, selectedCategories);
     if (!areaFeatures.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
