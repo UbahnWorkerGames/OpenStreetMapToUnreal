@@ -1,0 +1,52 @@
+{
+  "UB_RouteKey": "U8",
+  "UB_LineName": "U8",
+  "UB_CoordinateSpace": "LocalMeters",
+  "UB_SourceGeo": {
+    "UB_OverpassQueryName": "U8 Berlin",
+    "UB_OsmRelationId": 1234567
+  },
+  "UB_DefaultBrakeTriggerDistanceM": 190.0,
+  "UB_Points": [
+    {
+      "UB_PointId": "P001",
+      "UB_X": 0.0,
+      "UB_Y": 0.0,
+      "UB_Z": 0.0,
+      "UB_Kind": "Curve"
+    },
+    {
+      "UB_PointId": "P002",
+      "UB_X": 42.0,
+      "UB_Y": 3.5,
+      "UB_Z": 0.0,
+      "UB_Kind": "StationAnchor"
+    },
+    {
+      "UB_PointId": "P003",
+      "UB_X": 84.0,
+      "UB_Y": 3.5,
+      "UB_Z": 0.0,
+      "UB_Kind": "StationAnchor"
+    }
+  ],
+  "UB_Stations": [
+    {
+      "UB_StationKey": "Moritzplatz",
+      "UB_DisplayName": "Moritzplatz",
+      "UB_StopPointId": "P002",
+      "UB_StationBeginPointId": "P001",
+      "UB_StationEndPointId": "P003",
+      "UB_PcgThemeTag": "Station"
+    }
+  ],
+  "UB_Segments": [
+    {
+      "UB_SegmentId": "S001",
+      "UB_FromPointId": "P001",
+      "UB_ToPointId": "P003",
+      "UB_SegmentType": "Station",
+      "UB_PcgProfile": "Station_Default"
+    }
+  ]
+}

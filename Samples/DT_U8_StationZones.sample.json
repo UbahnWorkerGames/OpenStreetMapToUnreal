@@ -1,0 +1,13 @@
+[
+  {
+    "Name": "Moritzplatz",
+    "UB_StationKey": "Moritzplatz",
+    "UB_DisplayName": "Moritzplatz",
+    "UB_PlatformSide": "Right",
+    "UB_BrakeStartForwardUU": 19000.0,
+    "UB_PlatformBeginUU": 30000.0,
+    "UB_StopUU": 37500.0,
+    "UB_PlatformEndUU": 45000.0,
+    "UB_BrakeStartBackwardUU": 56500.0
+  }
+]

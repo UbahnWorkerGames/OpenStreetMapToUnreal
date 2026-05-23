@@ -1,0 +1,12 @@
+---
+description: Keep changes simple, explicit, and error-first
+alwaysApply: true
+---
+
+# Simple Error-First Rule
+
+- Keep solutions as simple as possible.
+- Do not invent fallbacks, guesses, or hidden recovery paths.
+- If something is unclear, ask a question instead of guessing.
+- Report errors actively and fix them when they appear.
+- Prefer direct, explicit implementations over clever abstractions.
