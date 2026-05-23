@@ -96,6 +96,9 @@ const areaLayerVisibility = new Map(
 
 let areaSelectionBounds = null;
 let areaSelectionRect = null;
+let areaSelectMode = false;
+let areaDragStart = null;
+let areaDraftRect = null;
 let areaFeatures = [];
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
@@ -838,6 +841,73 @@ function clearRoute() {
 function renderAreaFeatures() {
   areaRawLayer.clearLayers();
   areaProcessedLayer.clearLayers();
+}
+
+function setAreaSelectMode(active) {
+  areaSelectMode = active;
+  document.getElementById("btn-area-select")?.classList.toggle("active", areaSelectMode);
+  map.getContainer().style.cursor = areaSelectMode ? "crosshair" : "";
+  if (!areaSelectMode) {
+    areaDragStart = null;
+    if (areaDraftRect) {
+      areaSelectionLayer.removeLayer(areaDraftRect);
+      areaDraftRect = null;
+    }
+  }
+}
+
+function setAreaSelectionBounds(bounds) {
+  if (!bounds?.isValid?.()) {
+    setStatus("Bereichsauswahl ist ungueltig.", true);
+    return;
+  }
+  areaSelectionBounds = bounds;
+  if (areaSelectionRect) areaSelectionLayer.removeLayer(areaSelectionRect);
+  areaSelectionRect = L.rectangle(bounds, {
+    color: "#0f766e",
+    weight: 2,
+    fillColor: "#14b8a6",
+    fillOpacity: 0.08,
+    dashArray: "6 4",
+  }).addTo(areaSelectionLayer);
+  const sizeM = [
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]),
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]),
+  ];
+  setStatus(`Bereich gewaehlt: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m`);
+}
+
+function beginAreaSelection(e) {
+  if (!areaSelectMode) return;
+  L.DomEvent.stop(e);
+  areaDragStart = e.latlng;
+  map.dragging.disable();
+  if (areaDraftRect) areaSelectionLayer.removeLayer(areaDraftRect);
+  areaDraftRect = L.rectangle(L.latLngBounds(areaDragStart, areaDragStart), {
+    color: "#0f766e",
+    weight: 1,
+    fillColor: "#14b8a6",
+    fillOpacity: 0.05,
+    dashArray: "4 4",
+  }).addTo(areaSelectionLayer);
+}
+
+function updateAreaSelection(e) {
+  if (!areaSelectMode || !areaDragStart || !areaDraftRect) return;
+  areaDraftRect.setBounds(L.latLngBounds(areaDragStart, e.latlng));
+}
+
+function finishAreaSelection(e) {
+  if (!areaSelectMode || !areaDragStart) return;
+  const bounds = L.latLngBounds(areaDragStart, e.latlng);
+  map.dragging.enable();
+  if (areaDraftRect) {
+    areaSelectionLayer.removeLayer(areaDraftRect);
+    areaDraftRect = null;
+  }
+  areaDragStart = null;
+  setAreaSelectMode(false);
+  setAreaSelectionBounds(bounds);
 }
 
 function drawRoute(finalTrack, stations, fromTo, ref, fitView = false) {
@@ -1706,6 +1776,13 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
+document.getElementById("btn-area-select")?.addEventListener("click", () => {
+  setAreaSelectMode(!areaSelectMode);
+});
+
+map.on("mousedown", beginAreaSelection);
+map.on("mousemove", updateAreaSelection);
+map.on("mouseup", finishAreaSelection);
 
 document.querySelectorAll("[data-area-layer]").forEach((input) => {
   input.addEventListener("change", () => {
