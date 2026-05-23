@@ -113,11 +113,22 @@ let areaSelectMode = false;
 let areaDragStart = null;
 let areaDraftRect = null;
 let areaFeatures = [];
+let areaCache = null;
 
 function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
     .filter(([, visible]) => visible)
     .map(([category]) => category);
+}
+
+function areaBoundsCacheKey(bounds) {
+  if (!bounds?.isValid?.()) return "";
+  return [
+    bounds.getSouth().toFixed(6),
+    bounds.getWest().toFixed(6),
+    bounds.getNorth().toFixed(6),
+    bounds.getEast().toFixed(6),
+  ].join(",");
 }
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
@@ -903,42 +914,17 @@ function classifyAreaWay(tags = {}) {
   return null;
 }
 
-function buildAreaOverpassQuery(bounds, categories) {
-  if (!Array.isArray(categories) || categories.length === 0) {
-    throw new Error("Keine Bereichs-Layer ausgewaehlt.");
-  }
+function buildAreaOverpassQuery(bounds) {
   const bbox = [
     bounds.getSouth().toFixed(7),
     bounds.getWest().toFixed(7),
     bounds.getNorth().toFixed(7),
     bounds.getEast().toFixed(7),
   ].join(",");
-  const clauses = [];
-  if (categories.includes("motorway")) {
-    clauses.push(`way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"](${bbox});`);
-  }
-  if (categories.includes("major_road")) {
-    clauses.push(`way["highway"~"^(primary|primary_link|secondary|secondary_link)$"](${bbox});`);
-  }
-  if (categories.includes("city_road")) {
-    clauses.push(`way["highway"~"^(tertiary|tertiary_link|unclassified|residential|living_street|road)$"](${bbox});`);
-  }
-  if (categories.includes("service")) {
-    clauses.push(`way["highway"="service"](${bbox});`);
-  }
-  if (categories.includes("rail_tram")) {
-    clauses.push(`way["railway"="tram"](${bbox});`);
-  }
-  if (categories.includes("rail_train")) {
-    clauses.push(`way["railway"~"^(rail|light_rail)$"](${bbox});`);
-  }
-  if (categories.includes("rail_subway")) {
-    clauses.push(`way["railway"="subway"](${bbox});`);
-  }
-  if (!clauses.length) throw new Error("Ausgewaehlte Bereichs-Layer erzeugen keine Overpass-Abfrage.");
   return `[out:json][timeout:120];
 (
-  ${clauses.join("\n  ")}
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|road|service)$"](${bbox});
+  way["railway"~"^(tram|rail|subway|light_rail)$"](${bbox});
 );
 out geom;`;
 }
@@ -1057,14 +1043,12 @@ function resamplePolylineBySpacing(poly, spacingM) {
   return result;
 }
 
-function buildAreaFeatures(data, bounds, categories = Object.keys(AREA_LAYER_LABELS)) {
-  const selectedCategories = new Set(categories);
+function buildAreaFeatures(data, bounds) {
   const features = [];
   for (const el of data.elements || []) {
     if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
     const category = classifyAreaWay(el.tags || {});
     if (!category) continue;
-    if (!selectedCategories.has(category)) continue;
 
     const rawGeometry = el.geometry.map((p) => [p.lat, p.lon]);
     const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
@@ -1101,9 +1085,11 @@ function renderAreaFeatures() {
   areaProcessedLayer.clearLayers();
 
   const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
+  let visibleCount = 0;
   for (const feature of areaFeatures) {
     counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
     if (!areaLayerVisibility.get(feature.category)) continue;
+    visibleCount += 1;
 
     const style = AREA_STYLE[feature.category];
     L.polyline(feature.clippedGeometry, {
@@ -1127,10 +1113,10 @@ function renderAreaFeatures() {
 
   if (areaFeatures.length) {
     const summary = [...counts.entries()]
-      .filter(([, count]) => count > 0)
+      .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
       .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
       .join(" · ");
-    setStatus(`Bereich geladen: ${areaFeatures.length} Linien · ${summary}`);
+    setStatus(`Bereich geladen: ${visibleCount}/${areaFeatures.length} Linien sichtbar${summary ? ` · ${summary}` : ""}`);
   }
 }
 
@@ -1994,12 +1980,18 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
       return false;
     }
-    const selectedLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
-    setStatus(`Lade Bereich: ${selectedLabels} ...`);
+    const cacheKey = areaBoundsCacheKey(bounds);
+    if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
+      areaFeatures = areaCache.features;
+      renderAreaFeatures();
+      return true;
+    }
+
+    setStatus("Lade Bereichsdaten von Overpass ...");
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildAreaOverpassQuery(bounds, selectedCategories),
+      body: buildAreaOverpassQuery(bounds),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -2008,7 +2000,8 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       throw new Error("Antwort ohne elements");
     }
 
-    areaFeatures = buildAreaFeatures(data, bounds, selectedCategories);
+    areaFeatures = buildAreaFeatures(data, bounds);
+    areaCache = { key: cacheKey, bounds, features: areaFeatures };
     if (!areaFeatures.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
@@ -2130,8 +2123,12 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
   areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
   input.addEventListener("change", () => {
     areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
+    if (areaFeatures.length) {
+      renderAreaFeatures();
+      return;
+    }
     const selectedLabels = getSelectedAreaCategories().map((category) => AREA_LAYER_LABELS[category]).join(", ");
-    setStatus(selectedLabels ? `Auswahl fuer naechsten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
+    setStatus(selectedLabels ? `Auswahl fuer ersten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
   });
 });
 
