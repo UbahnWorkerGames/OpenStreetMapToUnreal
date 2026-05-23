@@ -1108,6 +1108,7 @@ function mergeAreaCenterlinePair(a, b) {
     sourceIds: [...(a.sourceIds || [a.id]), ...(b.sourceIds || [b.id])],
     clippedGeometry: centerline,
     simplifiedGeometry,
+    controlGeometry: simplifiedGeometry,
     segment10mGeometry,
     mergedCenterline: true,
   };
@@ -1177,6 +1178,7 @@ function buildAreaFeatures(data, bounds) {
         rawGeometry,
         clippedGeometry,
         simplifiedGeometry,
+        controlGeometry: simplifiedGeometry,
         segment10mGeometry,
       });
     }
@@ -1776,13 +1778,13 @@ function areaTagInt(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function buildAreaPcgRows() {
+function buildAreaPcgSplines() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.segment10mGeometry) && feature.segment10mGeometry.length >= 2,
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
   );
   if (!selected.length) return null;
 
-  const origin = selected[0].segment10mGeometry[0];
+  const origin = selected[0].controlGeometry[0];
   const [lat0, lon0] = origin;
   const cosLat = Math.cos((lat0 * Math.PI) / 180);
   const metersPerDegreeLat = 111320;
@@ -1796,47 +1798,46 @@ function buildAreaPcgRows() {
     };
   }
 
-  const rows = {};
+  const splines = [];
   for (const feature of selected) {
-    const rowName = feature.key;
-    if (!rowName) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
-    const controlPoints = feature.segment10mGeometry.map(toPointCm);
-    rows[rowName] = {
-      Key: rowName,
-      Type: feature.category,
-      Shape: feature.shape || "line",
-      OSMClass: areaFeatureExportClass(feature),
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    const controlPoints = feature.controlGeometry.map(toPointCm);
+    splines.push({
+      key: feature.key,
+      type: feature.category,
+      shape: feature.shape || "line",
+      osmClass: areaFeatureExportClass(feature),
       bBridge: areaTagBool(feature.tags.bridge),
       bTunnel: areaTagBool(feature.tags.tunnel),
-      OsmLayer: areaTagInt(feature.tags.layer),
-      bClosed: Boolean(feature.closed || isClosedPolyline(feature.segment10mGeometry)),
-      ControlPointsCm: controlPoints,
-    };
+      osmLayer: areaTagInt(feature.tags.layer),
+      bClosed: Boolean(feature.closed || isClosedPolyline(feature.controlGeometry)),
+      controlPointsCm: controlPoints,
+    });
   }
   return {
-    Version: 2,
-    CoordinateSystem: "LocalCm_XEast_YNorth_ZUp",
-    OriginWgs84: { Lat: +lat0.toFixed(7), Lon: +lon0.toFixed(7) },
-    ZMode: "ProjectInPCG",
-    MaxSegmentLengthM: AREA_SEGMENT_SPACING_M,
-    Rows: rows,
+    version: 3,
+    coordinateSystem: "local_cm_x_east_y_north_z_up",
+    originWgs84: { lat: +lat0.toFixed(7), lon: +lon0.toFixed(7) },
+    zMode: "project_in_pcg",
+    maxSegmentLengthM: AREA_SEGMENT_SPACING_M,
+    splines,
   };
 }
 
-function exportAreaPcgRows() {
+function exportAreaPcgSplines() {
   try {
-    const rows = buildAreaPcgRows();
-    if (!rows) {
+    const payload = buildAreaPcgSplines();
+    if (!payload) {
       setStatus("Keine sichtbaren Bereichsdaten fuer PCG-Export vorhanden.", true);
       return;
     }
-    const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "ue-pcg-area-splines.json";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`PCG-Export: ${Object.keys(rows.Rows).length} Spline-Rows`);
+    setStatus(`PCG-Export: ${payload.splines.length} Splines`);
   } catch (error) {
     setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -2369,7 +2370,7 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 });
 
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
-document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgRows);
+document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
