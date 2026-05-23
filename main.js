@@ -1065,6 +1065,14 @@ function areaGroupName(tags, category, id) {
   return tags?.name || tags?.ref || `${AREA_LAYER_LABELS[category]} ${id}`;
 }
 
+function isRoundaboutTags(tags = {}) {
+  return tags.junction === "roundabout" || tags.junction === "circular";
+}
+
+function isClosedPolyline(poly, toleranceM = 2) {
+  return Array.isArray(poly) && poly.length >= 4 && haversineM(poly[0], poly[poly.length - 1]) <= toleranceM;
+}
+
 function areaCenterlineGroupKey(category, name) {
   return normalizeAreaKey(`${category}_${name}`).toLowerCase();
 }
@@ -1080,6 +1088,7 @@ function averagePointDistanceM(trackA, trackB) {
 
 function shouldMergeAreaCenterline(a, b) {
   if (a.category !== b.category) return false;
+  if (a.shape === "roundabout" || b.shape === "roundabout") return false;
   const lenA = polylineLengthM(a.segment10mGeometry);
   const lenB = polylineLengthM(b.segment10mGeometry);
   if (lenA <= 0 || lenB <= 0) return false;
@@ -1143,21 +1152,28 @@ function buildAreaFeatures(data, bounds) {
     const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
     for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
       const clippedGeometry = clippedParts[partIndex];
-      const simplifiedGeometry = simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+      const tags = el.tags || {};
+      const roundabout = isRoundaboutTags(tags);
+      const closed = isClosedPolyline(clippedGeometry);
+      const simplifiedGeometry = roundabout && closed
+        ? clippedGeometry
+        : simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
       const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
       const signature = areaGeometrySignature(category, segment10mGeometry);
       if (seenSignatures.has(signature)) continue;
       seenSignatures.add(signature);
-      const name = areaGroupName(el.tags || {}, category, el.id);
+      const name = areaGroupName(tags, category, el.id);
       const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
       if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
       features.push({
         id: el.id,
         key,
         category,
+        shape: roundabout ? "roundabout" : "line",
+        closed,
         name,
         sourceIds: [el.id],
-        tags: el.tags || {},
+        tags,
         rawGeometry,
         clippedGeometry,
         simplifiedGeometry,
@@ -1170,7 +1186,8 @@ function buildAreaFeatures(data, bounds) {
 
 function areaFeatureLabel(feature) {
   const roadType = feature.tags.highway || feature.tags.railway || "";
-  return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})`;
+  const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
+  return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
 }
 
 function renderAreaFeatures() {
