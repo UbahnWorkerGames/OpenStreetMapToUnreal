@@ -1856,6 +1856,7 @@ function buildAreaPcgSplines() {
       key: feature.key,
       type: feature.category,
       shape: feature.shape || "line",
+      street: feature.name || "",
       osmClass: areaFeatureExportClass(feature),
       bBridge: areaTagBool(feature.tags.bridge),
       bTunnel: areaTagBool(feature.tags.tunnel),
@@ -1864,14 +1865,7 @@ function buildAreaPcgSplines() {
       controlPointsCm: controlPoints,
     });
   }
-  return {
-    version: 3,
-    coordinateSystem: "local_cm_x_east_y_north_z_up",
-    originWgs84: { lat: +lat0.toFixed(7), lon: +lon0.toFixed(7) },
-    zMode: "project_in_pcg",
-    maxSegmentLengthM: AREA_SEGMENT_SPACING_M,
-    splines,
-  };
+  return { splines };
 }
 
 function exportAreaPcgSplines() {
