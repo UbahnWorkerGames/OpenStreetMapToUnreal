@@ -2118,6 +2118,15 @@ async function importLineAndAreaFromOverpass(ref) {
   await importAreaFromOverpass(bounds);
 }
 
+async function importCurrentOverpassSelection(ref) {
+  if (areaSelectionBounds?.isValid?.()) {
+    await importAreaFromOverpass(areaSelectionBounds);
+    map.fitBounds(areaSelectionBounds, { padding: [48, 48], maxZoom: 14 });
+    return;
+  }
+  await importLineAndAreaFromOverpass(ref);
+}
+
 function boundsFromNominatimResult(result) {
   if (!Array.isArray(result?.boundingbox) || result.boundingbox.length !== 4) return null;
   const south = Number(result.boundingbox[0]);
@@ -2228,7 +2237,7 @@ setStatus("⇣ Overpass oder 📂 Master laden.");
 // ─── Edit-Panel Handler ───────────────────────────────────────────────────────
 
 document.getElementById("btn-edit")?.addEventListener("click", toggleEditMode);
-document.getElementById("btn-overpass")?.addEventListener("click", () => importLineAndAreaFromOverpass(select?.value || "U8"));
+document.getElementById("btn-overpass")?.addEventListener("click", () => importCurrentOverpassSelection(select?.value || "U8"));
 
 document.getElementById("edit-len")?.addEventListener("input", (e) => {
   if (!selectedStation) return;
