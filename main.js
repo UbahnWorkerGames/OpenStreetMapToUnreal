@@ -1865,7 +1865,7 @@ function buildAreaPcgSplines() {
       controlPointsCm: controlPoints,
     });
   }
-  return { splines };
+  return splines;
 }
 
 function exportAreaPcgSplines() {
@@ -1881,7 +1881,7 @@ function exportAreaPcgSplines() {
     a.download = "ue-pcg-area-splines.json";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`PCG-Export: ${payload.splines.length} Splines`);
+    setStatus(`PCG-Export: ${payload.length} Splines`);
   } catch (error) {
     setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
   }
