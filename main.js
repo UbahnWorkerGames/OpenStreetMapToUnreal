@@ -1763,6 +1763,86 @@ function exportMaster() {
   URL.revokeObjectURL(a.href);
 }
 
+function areaFeatureExportClass(feature) {
+  return feature.tags.highway || feature.tags.railway || "";
+}
+
+function areaTagBool(value) {
+  return value != null && value !== "no" && value !== "false" && value !== "0";
+}
+
+function areaTagInt(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function buildAreaPcgRows() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.segment10mGeometry) && feature.segment10mGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+
+  const origin = selected[0].segment10mGeometry[0];
+  const [lat0, lon0] = origin;
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * cosLat;
+
+  function toPointCm([lat, lon]) {
+    return {
+      X: +(((lon - lon0) * metersPerDegreeLon) * 100).toFixed(1),
+      Y: +(((lat - lat0) * metersPerDegreeLat) * 100).toFixed(1),
+      Z: 0,
+    };
+  }
+
+  const rows = {};
+  for (const feature of selected) {
+    const rowName = feature.key;
+    if (!rowName) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    const points = feature.segment10mGeometry.map(toPointCm);
+    rows[rowName] = {
+      Key: rowName,
+      Type: feature.category,
+      Shape: feature.shape || "line",
+      Name: feature.name || "",
+      SourceIds: (feature.sourceIds || [feature.id]).join(","),
+      OSMClass: areaFeatureExportClass(feature),
+      bBridge: areaTagBool(feature.tags.bridge),
+      bTunnel: areaTagBool(feature.tags.tunnel),
+      OsmLayer: areaTagInt(feature.tags.layer),
+      bOneWay: areaTagBool(feature.tags.oneway),
+      bClosed: Boolean(feature.closed || isClosedPolyline(feature.segment10mGeometry)),
+      OriginLat: +lat0.toFixed(7),
+      OriginLon: +lon0.toFixed(7),
+      LengthM: +polylineLengthM(feature.segment10mGeometry).toFixed(2),
+      SegmentLengthM: AREA_SEGMENT_SPACING_M,
+      PointCount: points.length,
+      PointsCm: points,
+    };
+  }
+  return rows;
+}
+
+function exportAreaPcgRows() {
+  try {
+    const rows = buildAreaPcgRows();
+    if (!rows) {
+      setStatus("Keine sichtbaren Bereichsdaten fuer PCG-Export vorhanden.", true);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ue-pcg-area-datatable.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`PCG-Export: ${Object.keys(rows).length} DataTable-Rows`);
+  } catch (error) {
+    setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 function applyEditsFromParsed(parsed) {
   // v4: Master + eingebetteter UE-Importblock
   if (parsed?.v === 4) {
@@ -2290,6 +2370,7 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 });
 
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
+document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgRows);
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
