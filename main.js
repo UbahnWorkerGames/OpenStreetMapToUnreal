@@ -1800,28 +1800,27 @@ function buildAreaPcgRows() {
   for (const feature of selected) {
     const rowName = feature.key;
     if (!rowName) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
-    const points = feature.segment10mGeometry.map(toPointCm);
+    const controlPoints = feature.segment10mGeometry.map(toPointCm);
     rows[rowName] = {
       Key: rowName,
       Type: feature.category,
       Shape: feature.shape || "line",
-      Name: feature.name || "",
-      SourceIds: (feature.sourceIds || [feature.id]).join(","),
       OSMClass: areaFeatureExportClass(feature),
       bBridge: areaTagBool(feature.tags.bridge),
       bTunnel: areaTagBool(feature.tags.tunnel),
       OsmLayer: areaTagInt(feature.tags.layer),
-      bOneWay: areaTagBool(feature.tags.oneway),
       bClosed: Boolean(feature.closed || isClosedPolyline(feature.segment10mGeometry)),
-      OriginLat: +lat0.toFixed(7),
-      OriginLon: +lon0.toFixed(7),
-      LengthM: +polylineLengthM(feature.segment10mGeometry).toFixed(2),
-      SegmentLengthM: AREA_SEGMENT_SPACING_M,
-      PointCount: points.length,
-      PointsCm: points,
+      ControlPointsCm: controlPoints,
     };
   }
-  return rows;
+  return {
+    Version: 2,
+    CoordinateSystem: "LocalCm_XEast_YNorth_ZUp",
+    OriginWgs84: { Lat: +lat0.toFixed(7), Lon: +lon0.toFixed(7) },
+    ZMode: "ProjectInPCG",
+    MaxSegmentLengthM: AREA_SEGMENT_SPACING_M,
+    Rows: rows,
+  };
 }
 
 function exportAreaPcgRows() {
@@ -1834,10 +1833,10 @@ function exportAreaPcgRows() {
     const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "ue-pcg-area-datatable.json";
+    a.download = "ue-pcg-area-splines.json";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`PCG-Export: ${Object.keys(rows).length} DataTable-Rows`);
+    setStatus(`PCG-Export: ${Object.keys(rows.Rows).length} Spline-Rows`);
   } catch (error) {
     setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
   }
