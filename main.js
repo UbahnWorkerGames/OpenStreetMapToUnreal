@@ -104,7 +104,7 @@ const AREA_LAYER_LABELS = {
 };
 
 const areaLayerVisibility = new Map(
-  Object.keys(AREA_LAYER_LABELS).map((key) => [key, true]),
+  Object.keys(AREA_LAYER_LABELS).map((key) => [key, key === "rail_subway"]),
 );
 
 let areaSelectionBounds = null;
@@ -2127,9 +2127,11 @@ map.on("mousemove", updateAreaSelection);
 map.on("mouseup", finishAreaSelection);
 
 document.querySelectorAll("[data-area-layer]").forEach((input) => {
+  areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
   input.addEventListener("change", () => {
     areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
-    renderAreaFeatures();
+    const selectedLabels = getSelectedAreaCategories().map((category) => AREA_LAYER_LABELS[category]).join(", ");
+    setStatus(selectedLabels ? `Auswahl fuer naechsten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
   });
 });
 
