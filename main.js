@@ -1141,6 +1141,56 @@ function mergeAreaCenterlines(features) {
   return merged;
 }
 
+function canStitchAreaFeatures(a, b) {
+  return a.category === b.category &&
+    a.shape !== "roundabout" &&
+    b.shape !== "roundabout" &&
+    areaCenterlineGroupKey(a.category, a.name) === areaCenterlineGroupKey(b.category, b.name);
+}
+
+function stitchAreaFeaturePair(a, b) {
+  const options = [
+    { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry[0]), geometry: [...a.controlGeometry, ...b.controlGeometry.slice(1)] },
+    { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry.at(-1)), geometry: [...a.controlGeometry, ...[...b.controlGeometry].reverse().slice(1)] },
+    { distance: haversineM(a.controlGeometry[0], b.controlGeometry.at(-1)), geometry: [...b.controlGeometry, ...a.controlGeometry.slice(1)] },
+    { distance: haversineM(a.controlGeometry[0], b.controlGeometry[0]), geometry: [...[...b.controlGeometry].reverse(), ...a.controlGeometry.slice(1)] },
+  ].sort((x, y) => x.distance - y.distance);
+
+  if (options[0].distance > 6) return null;
+  const controlGeometry = simplifyPolyline(options[0].geometry, AREA_SIMPLIFY_TOLERANCE_M);
+  return {
+    ...a,
+    id: `${a.id}+${b.id}`,
+    key: normalizeAreaKey(`${a.category}_${a.name}_${a.id}_${b.id}_stitched`),
+    sourceIds: [...(a.sourceIds || [a.id]), ...(b.sourceIds || [b.id])],
+    clippedGeometry: controlGeometry,
+    simplifiedGeometry: controlGeometry,
+    controlGeometry,
+    segment10mGeometry: resamplePolylineBySpacing(controlGeometry, AREA_SEGMENT_SPACING_M),
+  };
+}
+
+function stitchConnectedAreaFeatures(features) {
+  let pending = [...features];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer:
+    for (let i = 0; i < pending.length; i++) {
+      for (let j = i + 1; j < pending.length; j++) {
+        if (!canStitchAreaFeatures(pending[i], pending[j])) continue;
+        const stitched = stitchAreaFeaturePair(pending[i], pending[j]);
+        if (!stitched) continue;
+        pending = pending.filter((_, index) => index !== i && index !== j);
+        pending.push(stitched);
+        changed = true;
+        break outer;
+      }
+    }
+  }
+  return pending;
+}
+
 function buildAreaFeatures(data, bounds) {
   const features = [];
   const seenSignatures = new Set();
@@ -1183,7 +1233,7 @@ function buildAreaFeatures(data, bounds) {
       });
     }
   }
-  return mergeAreaCenterlines(features);
+  return stitchConnectedAreaFeatures(mergeAreaCenterlines(features));
 }
 
 function areaFeatureLabel(feature) {
