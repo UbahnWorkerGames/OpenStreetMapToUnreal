@@ -80,6 +80,19 @@ const PLATFORM_STYLE = {
   lineJoin: "round",
 };
 
+const AREA_STYLE = {
+  motorway: { color: "#dc2626", weight: 4 },
+  major_road: { color: "#f59e0b", weight: 3.5 },
+  city_road: { color: "#475569", weight: 2.5 },
+  service: { color: "#94a3b8", weight: 2 },
+  rail_tram: { color: "#16a34a", weight: 3 },
+  rail_train: { color: "#7c3aed", weight: 3 },
+  rail_subway: { color: "#2563eb", weight: 3 },
+};
+
+const AREA_SIMPLIFY_TOLERANCE_M = 3;
+const AREA_SEGMENT_SPACING_M = 10;
+
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
   major_road: "Hauptstrasse",
@@ -145,6 +158,10 @@ function moveMeter(point, tangent, distM) {
 }
 
 /** Kumulierte Länge (m) entlang einer Polylinie. */
+function pointKey(point) {
+  return `${point[0].toFixed(7)},${point[1].toFixed(7)}`;
+}
+
 function cumLengths(poly) {
   const c = [0];
   for (let i = 1; i < poly.length; i++)
@@ -838,9 +855,250 @@ function clearRoute() {
   routeLayer.clearLayers();
 }
 
+function normalizeAreaKey(sourceValue) {
+  let normalized = String(sourceValue || "").trim();
+  const replacements = new Map([
+    ["\u00c4", "Ae"], ["\u00d6", "Oe"], ["\u00dc", "Ue"],
+    ["\u00e4", "ae"], ["\u00f6", "oe"], ["\u00fc", "ue"], ["\u00df", "ss"],
+    ["Ã„", "Ae"], ["Ã–", "Oe"], ["Ãœ", "Ue"],
+    ["Ã¤", "ae"], ["Ã¶", "oe"], ["Ã¼", "ue"], ["ÃŸ", "ss"],
+  ]);
+  for (const [from, to] of replacements) normalized = normalized.split(from).join(to);
+
+  let result = "";
+  let lastWasUnderscore = false;
+  for (const ch of normalized) {
+    if (/^[A-Za-z0-9]$/.test(ch)) {
+      result += ch;
+      lastWasUnderscore = false;
+    } else if (!lastWasUnderscore) {
+      result += "_";
+      lastWasUnderscore = true;
+    }
+  }
+  return result.replace(/^_+|_+$/g, "");
+}
+
+function classifyAreaWay(tags = {}) {
+  const highway = tags.highway;
+  if (highway) {
+    if (["motorway", "motorway_link", "trunk", "trunk_link"].includes(highway)) return "motorway";
+    if (["primary", "primary_link", "secondary", "secondary_link"].includes(highway)) return "major_road";
+    if (["tertiary", "tertiary_link", "unclassified", "residential", "living_street", "road"].includes(highway)) {
+      return "city_road";
+    }
+    if (highway === "service") return "service";
+  }
+
+  const railway = tags.railway;
+  if (railway === "tram") return "rail_tram";
+  if (railway === "subway") return "rail_subway";
+  if (railway === "rail" || railway === "light_rail") return "rail_train";
+  return null;
+}
+
+function buildAreaOverpassQuery(bounds) {
+  const bbox = [
+    bounds.getSouth().toFixed(7),
+    bounds.getWest().toFixed(7),
+    bounds.getNorth().toFixed(7),
+    bounds.getEast().toFixed(7),
+  ].join(",");
+  return `[out:json][timeout:120];
+(
+  way["highway"](${bbox});
+  way["railway"~"^(tram|rail|subway|light_rail)$"](${bbox});
+);
+out geom;`;
+}
+
+function outCode(lat, lon, bounds) {
+  let code = 0;
+  if (lon < bounds.getWest()) code |= 1;
+  else if (lon > bounds.getEast()) code |= 2;
+  if (lat < bounds.getSouth()) code |= 4;
+  else if (lat > bounds.getNorth()) code |= 8;
+  return code;
+}
+
+function clipSegmentToBounds(a, b, bounds) {
+  let lat0 = a[0];
+  let lon0 = a[1];
+  let lat1 = b[0];
+  let lon1 = b[1];
+  let code0 = outCode(lat0, lon0, bounds);
+  let code1 = outCode(lat1, lon1, bounds);
+
+  while (true) {
+    if (!(code0 | code1)) return [[lat0, lon0], [lat1, lon1]];
+    if (code0 & code1) return null;
+
+    const codeOut = code0 || code1;
+    let lat;
+    let lon;
+    if (codeOut & 8) {
+      lat = bounds.getNorth();
+      lon = lon0 + ((lon1 - lon0) * (lat - lat0)) / (lat1 - lat0);
+    } else if (codeOut & 4) {
+      lat = bounds.getSouth();
+      lon = lon0 + ((lon1 - lon0) * (lat - lat0)) / (lat1 - lat0);
+    } else if (codeOut & 2) {
+      lon = bounds.getEast();
+      lat = lat0 + ((lat1 - lat0) * (lon - lon0)) / (lon1 - lon0);
+    } else {
+      lon = bounds.getWest();
+      lat = lat0 + ((lat1 - lat0) * (lon - lon0)) / (lon1 - lon0);
+    }
+
+    if (codeOut === code0) {
+      lat0 = lat;
+      lon0 = lon;
+      code0 = outCode(lat0, lon0, bounds);
+    } else {
+      lat1 = lat;
+      lon1 = lon;
+      code1 = outCode(lat1, lon1, bounds);
+    }
+  }
+}
+
+function clipPolylineToBounds(poly, bounds) {
+  const result = [];
+  let current = [];
+  for (let i = 0; i < poly.length - 1; i++) {
+    const clipped = clipSegmentToBounds(poly[i], poly[i + 1], bounds);
+    if (!clipped) {
+      if (current.length >= 2) result.push(current);
+      current = [];
+      continue;
+    }
+    const [start, end] = clipped;
+    if (!current.length || pointKey(current[current.length - 1]) !== pointKey(start)) {
+      if (current.length >= 2) result.push(current);
+      current = [start];
+    }
+    current.push(end);
+  }
+  if (current.length >= 2) result.push(current);
+  return result;
+}
+
+function perpendicularDistanceM(point, a, b) {
+  const refLat = (a[0] + b[0]) / 2;
+  const m = mpd(refLat);
+  const px = (point[1] - a[1]) * m.lon;
+  const py = (point[0] - a[0]) * m.lat;
+  const bx = (b[1] - a[1]) * m.lon;
+  const by = (b[0] - a[0]) * m.lat;
+  const lenSq = bx * bx + by * by;
+  if (lenSq < 1e-9) return Math.hypot(px, py);
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / lenSq));
+  return Math.hypot(px - bx * t, py - by * t);
+}
+
+function simplifyPolyline(poly, toleranceM) {
+  if (poly.length <= 2) return poly;
+  let maxDist = 0;
+  let index = 0;
+  for (let i = 1; i < poly.length - 1; i++) {
+    const dist = perpendicularDistanceM(poly[i], poly[0], poly[poly.length - 1]);
+    if (dist > maxDist) {
+      index = i;
+      maxDist = dist;
+    }
+  }
+  if (maxDist <= toleranceM) return [poly[0], poly[poly.length - 1]];
+  const left = simplifyPolyline(poly.slice(0, index + 1), toleranceM);
+  const right = simplifyPolyline(poly.slice(index), toleranceM);
+  return [...left.slice(0, -1), ...right];
+}
+
+function resamplePolylineBySpacing(poly, spacingM) {
+  if (poly.length < 2) return poly;
+  const cum = cumLengths(poly);
+  const total = cum[cum.length - 1];
+  if (total <= spacingM) return [poly[0], poly[poly.length - 1]];
+  const result = [];
+  for (let d = 0; d < total; d += spacingM) {
+    result.push(pointAtDist(poly, cum, d));
+  }
+  result.push(pointAtDist(poly, cum, total));
+  return result;
+}
+
+function buildAreaFeatures(data, bounds) {
+  const features = [];
+  for (const el of data.elements || []) {
+    if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
+    const category = classifyAreaWay(el.tags || {});
+    if (!category) continue;
+
+    const rawGeometry = el.geometry.map((p) => [p.lat, p.lon]);
+    const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
+    for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
+      const clippedGeometry = clippedParts[partIndex];
+      const simplifiedGeometry = simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+      const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+      const name = el.tags?.name || el.tags?.ref || `${AREA_LAYER_LABELS[category]} ${el.id}`;
+      const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
+      if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      features.push({
+        id: el.id,
+        key,
+        category,
+        name,
+        tags: el.tags || {},
+        rawGeometry,
+        clippedGeometry,
+        simplifiedGeometry,
+        segment10mGeometry,
+      });
+    }
+  }
+  return features;
+}
+
+function areaFeatureLabel(feature) {
+  const roadType = feature.tags.highway || feature.tags.railway || "";
+  return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})`;
+}
+
 function renderAreaFeatures() {
   areaRawLayer.clearLayers();
   areaProcessedLayer.clearLayers();
+
+  const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
+  for (const feature of areaFeatures) {
+    counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
+    if (!areaLayerVisibility.get(feature.category)) continue;
+
+    const style = AREA_STYLE[feature.category];
+    L.polyline(feature.clippedGeometry, {
+      color: style.color,
+      weight: Math.max(1, style.weight - 1),
+      opacity: 0.22,
+      dashArray: "2 6",
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(areaRawLayer);
+
+    const processed = L.polyline(feature.segment10mGeometry, {
+      color: style.color,
+      weight: style.weight,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(areaProcessedLayer);
+    processed.bindTooltip(areaFeatureLabel(feature), { sticky: true });
+  }
+
+  if (areaFeatures.length) {
+    const summary = [...counts.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
+      .join(" · ");
+    setStatus(`Bereich geladen: ${areaFeatures.length} Linien · ${summary}`);
+  }
 }
 
 function setAreaSelectMode(active) {
@@ -1689,6 +1947,39 @@ async function importFromOverpass(ref) {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 
+async function importAreaFromOverpass() {
+  if (!areaSelectionBounds?.isValid?.()) {
+    setStatus("Erst einen Bereich auf der Karte ziehen.", true);
+    return;
+  }
+
+  try {
+    setStatus("Lade Strassen und Schienen fuer Bereich ...");
+    const response = await fetch(OVERPASS_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: buildAreaOverpassQuery(areaSelectionBounds),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    if (!data || typeof data !== "object" || !Array.isArray(data.elements)) {
+      throw new Error("Antwort ohne elements");
+    }
+
+    areaFeatures = buildAreaFeatures(data, areaSelectionBounds);
+    if (!areaFeatures.length) {
+      areaRawLayer.clearLayers();
+      areaProcessedLayer.clearLayers();
+      setStatus("Keine passenden Strassen- oder Schienen-Ways im Bereich gefunden.", true);
+      return;
+    }
+    renderAreaFeatures();
+  } catch (error) {
+    setStatus(`Bereichsimport fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 const select = document.getElementById("line-select");
 if (select) {
   for (const line of LINES) {
@@ -1779,6 +2070,7 @@ document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFi
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
+document.getElementById("btn-area-load")?.addEventListener("click", importAreaFromOverpass);
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
