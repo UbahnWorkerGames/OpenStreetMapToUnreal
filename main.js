@@ -1973,31 +1973,33 @@ async function importFromOverpass(ref) {
     masterStations = null;
     lastRelation = null;
     loadLine(ref);
+    return true;
   } catch (error) {
     setStatus(`Overpass-Direktimport fehlgeschlagen: ${error.message}`, true);
+    return false;
   }
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 
-async function importAreaFromOverpass() {
-  if (!areaSelectionBounds?.isValid?.()) {
+async function importAreaFromOverpass(bounds = areaSelectionBounds) {
+  if (!bounds?.isValid?.()) {
     setStatus("Erst einen Bereich auf der Karte ziehen.", true);
-    return;
+    return false;
   }
 
   try {
     const selectedCategories = getSelectedAreaCategories();
     if (!selectedCategories.length) {
       setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
-      return;
+      return false;
     }
     const selectedLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
     setStatus(`Lade Bereich: ${selectedLabels} ...`);
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildAreaOverpassQuery(areaSelectionBounds, selectedCategories),
+      body: buildAreaOverpassQuery(bounds, selectedCategories),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -2006,17 +2008,26 @@ async function importAreaFromOverpass() {
       throw new Error("Antwort ohne elements");
     }
 
-    areaFeatures = buildAreaFeatures(data, areaSelectionBounds, selectedCategories);
+    areaFeatures = buildAreaFeatures(data, bounds, selectedCategories);
     if (!areaFeatures.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
       setStatus("Keine passenden Strassen- oder Schienen-Ways im Bereich gefunden.", true);
-      return;
+      return false;
     }
     renderAreaFeatures();
+    return true;
   } catch (error) {
     setStatus(`Bereichsimport fehlgeschlagen: ${error.message}`, true);
+    return false;
   }
+}
+
+async function importLineAndAreaFromOverpass(ref) {
+  const lineLoaded = await importFromOverpass(ref);
+  if (!lineLoaded) return;
+  const bounds = areaSelectionBounds?.isValid?.() ? areaSelectionBounds : map.getBounds();
+  await importAreaFromOverpass(bounds);
 }
 
 const select = document.getElementById("line-select");
@@ -2068,7 +2079,7 @@ setStatus("⇣ Overpass oder 📂 Master laden.");
 // ─── Edit-Panel Handler ───────────────────────────────────────────────────────
 
 document.getElementById("btn-edit")?.addEventListener("click", toggleEditMode);
-document.getElementById("btn-overpass")?.addEventListener("click", () => importFromOverpass(select?.value || "U8"));
+document.getElementById("btn-overpass")?.addEventListener("click", () => importLineAndAreaFromOverpass(select?.value || "U8"));
 
 document.getElementById("edit-len")?.addEventListener("input", (e) => {
   if (!selectedStation) return;
