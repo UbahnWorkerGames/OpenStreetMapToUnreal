@@ -92,6 +92,8 @@ const AREA_STYLE = {
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
 const AREA_SEGMENT_SPACING_M = 10;
+const AREA_DEDUPE_DECIMALS = 5;
+const AREA_DRAW_RAW_GEOMETRY = false;
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -1043,8 +1045,16 @@ function resamplePolylineBySpacing(poly, spacingM) {
   return result;
 }
 
+function areaGeometrySignature(category, geometry) {
+  const points = geometry.map((point) => `${point[0].toFixed(AREA_DEDUPE_DECIMALS)},${point[1].toFixed(AREA_DEDUPE_DECIMALS)}`);
+  const forward = points.join("|");
+  const backward = [...points].reverse().join("|");
+  return `${category}:${forward < backward ? forward : backward}`;
+}
+
 function buildAreaFeatures(data, bounds) {
   const features = [];
+  const seenSignatures = new Set();
   for (const el of data.elements || []) {
     if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
     const category = classifyAreaWay(el.tags || {});
@@ -1056,6 +1066,9 @@ function buildAreaFeatures(data, bounds) {
       const clippedGeometry = clippedParts[partIndex];
       const simplifiedGeometry = simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
       const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+      const signature = areaGeometrySignature(category, segment10mGeometry);
+      if (seenSignatures.has(signature)) continue;
+      seenSignatures.add(signature);
       const name = el.tags?.name || el.tags?.ref || `${AREA_LAYER_LABELS[category]} ${el.id}`;
       const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
       if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
@@ -1092,14 +1105,16 @@ function renderAreaFeatures() {
     visibleCount += 1;
 
     const style = AREA_STYLE[feature.category];
-    L.polyline(feature.clippedGeometry, {
-      color: style.color,
-      weight: Math.max(1, style.weight - 1),
-      opacity: 0.22,
-      dashArray: "2 6",
-      lineCap: "round",
-      lineJoin: "round",
-    }).addTo(areaRawLayer);
+    if (AREA_DRAW_RAW_GEOMETRY) {
+      L.polyline(feature.clippedGeometry, {
+        color: style.color,
+        weight: Math.max(1, style.weight - 1),
+        opacity: 0.22,
+        dashArray: "2 6",
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(areaRawLayer);
+    }
 
     const processed = L.polyline(feature.segment10mGeometry, {
       color: style.color,
