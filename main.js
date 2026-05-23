@@ -58,7 +58,9 @@ let currentSourceKind = null; // "overpass" | "master"
 
 const SPLINE_SPACING_M = 50; // Abstand der initialen Spline-Kontrollpunkte
 const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
+const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
+const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 let persistCacheTimer = null;
 
@@ -2038,6 +2040,67 @@ async function importLineAndAreaFromOverpass(ref) {
   await importAreaFromOverpass(bounds);
 }
 
+function boundsFromNominatimResult(result) {
+  if (!Array.isArray(result?.boundingbox) || result.boundingbox.length !== 4) return null;
+  const south = Number(result.boundingbox[0]);
+  const north = Number(result.boundingbox[1]);
+  const west = Number(result.boundingbox[2]);
+  const east = Number(result.boundingbox[3]);
+  if (![south, north, west, east].every(Number.isFinite)) return null;
+  return L.latLngBounds([south, west], [north, east]);
+}
+
+async function findPostalCodeBounds(postalCode) {
+  const normalized = String(postalCode || "").trim();
+  if (!/^\d{4,6}$/.test(normalized)) {
+    throw new Error("PLZ muss 4 bis 6 Ziffern haben.");
+  }
+
+  const cacheKey = `${POSTAL_CODE_CACHE_KEY_PREFIX}${normalized}`;
+  const cached = _storageGet(cacheKey);
+  const cachedBounds = boundsFromNominatimResult(cached?.result);
+  if (cachedBounds?.isValid?.()) return { bounds: cachedBounds, label: cached.result.display_name };
+
+  const url = new URL(NOMINATIM_API_URL);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("countrycodes", "de");
+  url.searchParams.set("postalcode", normalized);
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("addressdetails", "1");
+
+  const response = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
+
+  const results = await response.json();
+  if (!Array.isArray(results) || !results.length) {
+    throw new Error(`Keine Ortsdaten fuer PLZ ${normalized} gefunden.`);
+  }
+
+  const result = results[0];
+  const bounds = boundsFromNominatimResult(result);
+  if (!bounds?.isValid?.()) {
+    throw new Error(`PLZ ${normalized} hat keine gueltige Bounding Box.`);
+  }
+  _storageSet(cacheKey, { v: 1, ts: Date.now(), result });
+  return { bounds, label: result.display_name };
+}
+
+async function selectPostalCodeArea() {
+  const input = document.getElementById("postal-code-input");
+  const postalCode = input?.value || "";
+  try {
+    setStatus("Suche PLZ ...");
+    const { bounds, label } = await findPostalCodeBounds(postalCode);
+    setAreaSelectionBounds(bounds);
+    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
+    setStatus(`PLZ-Bereich gewaehlt: ${label}`);
+  } catch (error) {
+    setStatus(`PLZ-Suche fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 const select = document.getElementById("line-select");
 if (select) {
   for (const line of LINES) {
@@ -2129,6 +2192,10 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
 document.getElementById("btn-area-load")?.addEventListener("click", importAreaFromOverpass);
+document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
+document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") selectPostalCodeArea();
+});
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
