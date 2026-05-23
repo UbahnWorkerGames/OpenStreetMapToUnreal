@@ -66,6 +66,26 @@
         flex-wrap: wrap;
       }
 
+      .layer-toggles {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 10px;
+        margin-top: 8px;
+      }
+
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .toggle input {
+        margin: 0;
+      }
+
       .row label {
         font-size: 0.85rem;
         color: var(--muted);
@@ -239,6 +259,19 @@
         <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
         <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
         <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
+      </div>
+      <div class="row" style="margin-top: 10px">
+        <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
+        <button type="button" class="btn-clear" id="btn-area-load" title="Straßen und Schienen im Bereich laden">OSM Bereich</button>
+      </div>
+      <div class="layer-toggles" aria-label="Bereichs-Layer">
+        <label class="toggle"><input type="checkbox" data-area-layer="motorway" checked> Autobahn</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="major_road" checked> Hauptstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="city_road" checked> Stadtstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="service" checked> Service</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_tram" checked> Tram</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_train" checked> Zug</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
       </div>
       <p id="direction" hidden></p>
       <p id="status"></p>

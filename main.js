@@ -33,6 +33,9 @@ L.control.scale({ metric: true, imperial: false }).addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 const editLayer = L.layerGroup().addTo(map);
 const splineLayer = L.layerGroup().addTo(map);
+const areaSelectionLayer = L.layerGroup().addTo(map);
+const areaRawLayer = L.layerGroup().addTo(map);
+const areaProcessedLayer = L.layerGroup().addTo(map);
 let uploadedJsonData = null;
 
 const DEFAULT_HALF_LENGTH_M = 65; // 130m Fallback wenn kein platform-Way vorhanden
@@ -76,6 +79,24 @@ const PLATFORM_STYLE = {
   lineCap: "round",
   lineJoin: "round",
 };
+
+const AREA_LAYER_LABELS = {
+  motorway: "Autobahn",
+  major_road: "Hauptstrasse",
+  city_road: "Stadtstrasse",
+  service: "Service",
+  rail_tram: "Tram",
+  rail_train: "Zug",
+  rail_subway: "U-Bahn",
+};
+
+const areaLayerVisibility = new Map(
+  Object.keys(AREA_LAYER_LABELS).map((key) => [key, true]),
+);
+
+let areaSelectionBounds = null;
+let areaSelectionRect = null;
+let areaFeatures = [];
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
 
@@ -812,6 +833,11 @@ function loadCachedMasterForRef(ref) {
 
 function clearRoute() {
   routeLayer.clearLayers();
+}
+
+function renderAreaFeatures() {
+  areaRawLayer.clearLayers();
+  areaProcessedLayer.clearLayers();
 }
 
 function drawRoute(finalTrack, stations, fromTo, ref, fitView = false) {
@@ -1681,8 +1707,17 @@ document.getElementById("btn-export-master")?.addEventListener("click", exportMa
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 
+document.querySelectorAll("[data-area-layer]").forEach((input) => {
+  input.addEventListener("change", () => {
+    areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
+    renderAreaFeatures();
+  });
+});
+
 document.getElementById("btn-fit")?.addEventListener("click", () => {
-  const bounds = routeLayer.getBounds();
+  const bounds = areaProcessedLayer.getBounds().isValid()
+    ? areaProcessedLayer.getBounds()
+    : routeLayer.getBounds();
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 13 });
 });
 
