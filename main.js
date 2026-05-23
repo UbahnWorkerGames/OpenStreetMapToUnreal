@@ -96,6 +96,8 @@ const AREA_SIMPLIFY_TOLERANCE_M = 3;
 const AREA_SEGMENT_SPACING_M = 10;
 const AREA_DEDUPE_DECIMALS = 5;
 const AREA_DRAW_RAW_GEOMETRY = false;
+const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
+const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -1054,6 +1056,81 @@ function areaGeometrySignature(category, geometry) {
   return `${category}:${forward < backward ? forward : backward}`;
 }
 
+function polylineLengthM(poly) {
+  if (!Array.isArray(poly) || poly.length < 2) return 0;
+  return cumLengths(poly).at(-1) || 0;
+}
+
+function areaGroupName(tags, category, id) {
+  return tags?.name || tags?.ref || `${AREA_LAYER_LABELS[category]} ${id}`;
+}
+
+function areaCenterlineGroupKey(category, name) {
+  return normalizeAreaKey(`${category}_${name}`).toLowerCase();
+}
+
+function averagePointDistanceM(trackA, trackB) {
+  const n = Math.max(2, Math.min(24, Math.round(Math.min(trackA.length, trackB.length))));
+  const a = resamplePolyline(trackA, n);
+  const b = resamplePolyline(trackB, n);
+  const bForward = b.reduce((sum, point, index) => sum + haversineM(point, a[index]), 0) / n;
+  const bReverse = [...b].reverse().reduce((sum, point, index) => sum + haversineM(point, a[index]), 0) / n;
+  return Math.min(bForward, bReverse);
+}
+
+function shouldMergeAreaCenterline(a, b) {
+  if (a.category !== b.category) return false;
+  const lenA = polylineLengthM(a.segment10mGeometry);
+  const lenB = polylineLengthM(b.segment10mGeometry);
+  if (lenA <= 0 || lenB <= 0) return false;
+  const lengthRatio = Math.min(lenA, lenB) / Math.max(lenA, lenB);
+  if (lengthRatio < AREA_CENTERLINE_LENGTH_RATIO) return false;
+  return averagePointDistanceM(a.segment10mGeometry, b.segment10mGeometry) <= AREA_CENTERLINE_MAX_DISTANCE_M;
+}
+
+function mergeAreaCenterlinePair(a, b) {
+  const centerline = computeCenterline(a.segment10mGeometry, b.segment10mGeometry);
+  const simplifiedGeometry = simplifyPolyline(centerline, AREA_SIMPLIFY_TOLERANCE_M);
+  const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+  return {
+    ...a,
+    id: `${a.id}+${b.id}`,
+    key: normalizeAreaKey(`${a.category}_${a.name}_${a.id}_${b.id}_centerline`),
+    sourceIds: [...(a.sourceIds || [a.id]), ...(b.sourceIds || [b.id])],
+    clippedGeometry: centerline,
+    simplifiedGeometry,
+    segment10mGeometry,
+    mergedCenterline: true,
+  };
+}
+
+function mergeAreaCenterlines(features) {
+  const groups = new Map();
+  for (const feature of features) {
+    const key = areaCenterlineGroupKey(feature.category, feature.name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(feature);
+  }
+
+  const merged = [];
+  for (const group of groups.values()) {
+    const used = new Set();
+    for (let i = 0; i < group.length; i++) {
+      if (used.has(i)) continue;
+      let current = group[i];
+      for (let j = i + 1; j < group.length; j++) {
+        if (used.has(j)) continue;
+        if (!shouldMergeAreaCenterline(current, group[j])) continue;
+        current = mergeAreaCenterlinePair(current, group[j]);
+        used.add(j);
+      }
+      used.add(i);
+      merged.push(current);
+    }
+  }
+  return merged;
+}
+
 function buildAreaFeatures(data, bounds) {
   const features = [];
   const seenSignatures = new Set();
@@ -1071,7 +1148,7 @@ function buildAreaFeatures(data, bounds) {
       const signature = areaGeometrySignature(category, segment10mGeometry);
       if (seenSignatures.has(signature)) continue;
       seenSignatures.add(signature);
-      const name = el.tags?.name || el.tags?.ref || `${AREA_LAYER_LABELS[category]} ${el.id}`;
+      const name = areaGroupName(el.tags || {}, category, el.id);
       const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
       if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
       features.push({
@@ -1079,6 +1156,7 @@ function buildAreaFeatures(data, bounds) {
         key,
         category,
         name,
+        sourceIds: [el.id],
         tags: el.tags || {},
         rawGeometry,
         clippedGeometry,
@@ -1087,7 +1165,7 @@ function buildAreaFeatures(data, bounds) {
       });
     }
   }
-  return features;
+  return mergeAreaCenterlines(features);
 }
 
 function areaFeatureLabel(feature) {
