@@ -13,7 +13,7 @@ The project is focused on OSM area selection, street/rail way extraction, and ge
 ## What Is Not Committed
 
 - generated Unreal Python snippets
-- generated PCG/DataTable JSON
+- generated Unreal Python snippets
 - raw Overpass responses
 - `Tool/node_modules/`
 - `Tool/dist/`

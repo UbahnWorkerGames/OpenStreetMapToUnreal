@@ -346,10 +346,18 @@ function setAreaSelectMode(active) {
   areaSelectMode = active;
   document.getElementById("btn-area-select")?.classList.toggle("active", active);
   map.getContainer().style.cursor = active ? "crosshair" : "";
+  if (active) {
+    map.dragging.disable();
+    map.doubleClickZoom.disable();
+  } else {
+    map.dragging.enable();
+    map.doubleClickZoom.enable();
+  }
 }
 
 function beginAreaSelection(event) {
   if (!areaSelectMode) return;
+  event.originalEvent?.preventDefault?.();
   areaDragStart = event.latlng;
   if (areaDraftRect) areaDraftRect.remove();
   areaDraftRect = L.rectangle([areaDragStart, areaDragStart], {
@@ -361,11 +369,13 @@ function beginAreaSelection(event) {
 
 function updateAreaSelection(event) {
   if (!areaSelectMode || !areaDragStart || !areaDraftRect) return;
+  event.originalEvent?.preventDefault?.();
   areaDraftRect.setBounds(L.latLngBounds(areaDragStart, event.latlng));
 }
 
 function finishAreaSelection(event) {
   if (!areaSelectMode || !areaDragStart) return;
+  event.originalEvent?.preventDefault?.();
   const bounds = L.latLngBounds(areaDragStart, event.latlng);
   areaDragStart = null;
   if (areaDraftRect) {
@@ -723,20 +733,6 @@ function exportAreaUnrealPython() {
   }
 }
 
-function exportAreaPcgJson() {
-  try {
-    const payload = buildAreaPcgRows();
-    if (!payload) {
-      setStatus("Keine sichtbaren Bereichsdaten fuer PCG-Export vorhanden.", true);
-      return;
-    }
-    downloadTextFile("ue-pcg-area-splines.json", JSON.stringify(payload, null, 2), "application/json");
-    setStatus(`PCG-Export: ${payload.length} DataTable-Zeilen`);
-  } catch (error) {
-    setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
-  }
-}
-
 function boundsFromNominatimResult(result) {
   if (!Array.isArray(result?.boundingbox) || result.boundingbox.length !== 4) return null;
   const south = Number(result.boundingbox[0]);
@@ -777,7 +773,6 @@ async function selectPostalCodeArea() {
 document.getElementById("btn-area-select")?.addEventListener("click", () => setAreaSelectMode(!areaSelectMode));
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
-document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgJson);
 document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
 document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") selectPostalCodeArea();
