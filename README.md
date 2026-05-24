@@ -1,8 +1,8 @@
 # OSM to Unreal
 
-Web tool for turning OpenStreetMap area data into Unreal street spline actors.
+Web tool for turning OpenStreetMap area data into Unreal street spline actors and simple building cubes.
 
-The project is focused on OSM area selection, street/rail way extraction, and generated Unreal Python for a configurable street Blueprint.
+The project is focused on OSM area selection, street/rail/building extraction, and generated Unreal Python for configurable street and building Blueprints.
 
 ## What Is Here
 
@@ -12,7 +12,6 @@ The project is focused on OSM area selection, street/rail way extraction, and ge
 
 ## What Is Not Committed
 
-- generated Unreal Python snippets
 - generated Unreal Python snippets
 - raw Overpass responses
 - `Tool/node_modules/`
@@ -29,7 +28,7 @@ npm run dev
 
 Then:
 
-1. Set `Street Path BP` to your Unreal Blueprint path.
+1. Set `Street Path BP` and `Building Cube BP` to your Unreal Blueprint paths.
 2. Draw an area with `Bereich`, or search a place/postcode with `Ort`.
 3. Select only the OSM layers you need.
 4. Click `Overpass laden`.
@@ -55,5 +54,7 @@ The generated Python expects the Blueprint path configured in the tool. Default:
 ```
 
 The Blueprint must contain a `SplineComponent` named `StreetSpline` or `Spline`; otherwise the first available `SplineComponent` is used.
+
+The building Blueprint is expected to be a `100 x 100 x 100 cm` cube. The generated code scales it to each building's bounding box and estimated height.
 
 See `CITY_STREET_IMPORT.md` for details and copy-paste safety warnings.

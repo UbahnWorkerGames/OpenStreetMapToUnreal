@@ -25,7 +25,7 @@ Do not commit local/generated runtime output:
 
 ## Unreal Blueprint Requirement
 
-Set `Street Path BP` in the web tool to the Blueprint you want to spawn. Default:
+Set `Street Path BP` in the web tool to the spline Blueprint you want to spawn. Default:
 
 ```text
 /Game/_UbahnWorkerGames/TEST/BP_CityTest
@@ -39,6 +39,8 @@ Spline
 ```
 
 The value is saved in the browser's local storage. If neither component name exists, the importer uses the first `SplineComponent` it finds. If the Blueprint has no `SplineComponent`, the import fails loudly.
+
+Set `Building Cube BP` to a Blueprint that contains a `100 x 100 x 100 cm` cube. The generated Python scales that actor to the exported building width, depth, and height.
 
 ## Actor Tags Written By The Importer
 
@@ -62,6 +64,17 @@ Tunnel
 
 `Breite` comes from OSM `width` when present, otherwise from `lanes * 3.5`, otherwise from a category default.
 
+Every spawned building actor gets these tags:
+
+```text
+OSMBuilding
+Building:<name or generated key>
+Typ:<OSM building value>
+WidthCm:<width>
+DepthCm:<depth>
+HeightCm:<height>
+```
+
 ## Web Tool Workflow
 
 1. Start the web tool:
@@ -72,7 +85,7 @@ Tunnel
    npm run dev
    ```
 
-2. Set `Street Path BP` to your Unreal Blueprint path.
+2. Set `Street Path BP` and `Building Cube BP` to your Unreal Blueprint paths.
 3. Draw a map area with `Bereich`, or search an area with `Ort`.
 4. Select only the layers you need.
 5. Click `Overpass laden`.
@@ -97,13 +110,14 @@ The `UE Python` modal generates executable Python code. Treat it like any other 
 - save or commit your level before running large imports
 - do not paste and execute Python code from unknown sources
 
-The generated script deletes existing actors whose labels start with:
+The generated script deletes existing street actors and building actors whose labels start with:
 
 ```text
 CITY_STREET_
+OSM_BUILDING_
 ```
 
-Then it recreates one actor per exported street spline using the configured Blueprint and writes the spline points into the Blueprint's `SplineComponent`. That is intentional for repeatable imports, but it means actor labels matter.
+Then it recreates one actor per exported street spline and one cube actor per exported building using the configured Blueprints. That is intentional for repeatable imports, but it means actor labels matter.
 
 ## Expected Result
 
@@ -111,9 +125,10 @@ After running the Python code, the level should contain actors named like:
 
 ```text
 CITY_STREET_<spline_key>
+OSM_BUILDING_<building_key>
 ```
 
-Each actor should contain the filled street spline and the tags listed above.
+Street actors should contain filled splines. Building actors should be scaled cubes with the tags listed above.
 
 ## Failure Policy
 

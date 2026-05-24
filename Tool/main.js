@@ -9,6 +9,7 @@ const AREA_STYLE = {
   rail_tram: { color: "#16a34a", weight: 3 },
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
+  building: { color: "#64748b", weight: 1.2 },
 };
 
 const AREA_LAYER_LABELS = {
@@ -19,6 +20,7 @@ const AREA_LAYER_LABELS = {
   rail_tram: "Tram",
   rail_train: "Zug",
   rail_subway: "Subway",
+  building: "Gebaeude",
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
@@ -26,7 +28,10 @@ const AREA_LARGE_REQUEST_KM2 = 2500;
 const AREA_MAX_REQUEST_KM2 = 2500;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
 const DEFAULT_STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest";
+const DEFAULT_BUILDING_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube";
 const STREET_BP_PATH_STORAGE_KEY = "osm-to-unreal.streetBpPath";
+const BUILDING_BP_PATH_STORAGE_KEY = "osm-to-unreal.buildingBpPath";
+const DEFAULT_BUILDING_HEIGHT_CM = 300;
 
 const map = L.map("map", { zoomControl: true, minZoom: 2, maxZoom: 19 }).setView([52.52, 13.405], 12);
 
@@ -76,6 +81,29 @@ function initStreetBpPathInput() {
   input.value = getStoredStreetBpPath();
   input.addEventListener("change", () => setStoredStreetBpPath(input.value));
   input.addEventListener("blur", () => setStoredStreetBpPath(input.value));
+}
+
+function getStoredBuildingBpPath() {
+  const stored = window.localStorage.getItem(BUILDING_BP_PATH_STORAGE_KEY);
+  return stored?.trim() || DEFAULT_BUILDING_BP_PATH;
+}
+
+function setStoredBuildingBpPath(value) {
+  const normalized = String(value || "").trim();
+  window.localStorage.setItem(BUILDING_BP_PATH_STORAGE_KEY, normalized || DEFAULT_BUILDING_BP_PATH);
+}
+
+function getBuildingBpPathForExport() {
+  const input = document.getElementById("building-bp-path-input");
+  return input?.value?.trim() || getStoredBuildingBpPath();
+}
+
+function initBuildingBpPathInput() {
+  const input = document.getElementById("building-bp-path-input");
+  if (!input) return;
+  input.value = getStoredBuildingBpPath();
+  input.addEventListener("change", () => setStoredBuildingBpPath(input.value));
+  input.addEventListener("blur", () => setStoredBuildingBpPath(input.value));
 }
 
 function setStatus(message, isError = false) {
@@ -145,6 +173,7 @@ function classifyAreaWay(tags = {}) {
   if (railway === "tram") return "rail_tram";
   if (railway === "subway") return "rail_subway";
   if (railway === "rail" || railway === "light_rail") return "rail_train";
+  if (tags.building && tags.building !== "no") return "building";
   return null;
 }
 
@@ -164,6 +193,8 @@ function areaOverpassFilterForCategory(category) {
       return 'way["railway"~"^(rail|light_rail)$"]';
     case "rail_subway":
       return 'way["railway"="subway"]';
+    case "building":
+      return 'way["building"]';
     default:
       return null;
   }
@@ -261,6 +292,14 @@ function areaTagFloat(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function buildingHeightCm(tags = {}) {
+  const heightM = areaTagFloat(tags.height);
+  if (heightM != null && heightM > 0) return heightM * 100;
+  const levels = areaTagFloat(tags["building:levels"]);
+  if (levels != null && levels > 0) return levels * 300;
+  return DEFAULT_BUILDING_HEIGHT_CM;
+}
+
 function areaFeatureWidthM(feature) {
   const explicitWidth = areaTagFloat(feature.tags.width);
   if (explicitWidth != null) return explicitWidth;
@@ -315,6 +354,64 @@ function buildAreaFeatures(data) {
   return features;
 }
 
+function pointBounds(points) {
+  const lats = points.map((point) => point[0]);
+  const lons = points.map((point) => point[1]);
+  return {
+    south: Math.min(...lats),
+    north: Math.max(...lats),
+    west: Math.min(...lons),
+    east: Math.max(...lons),
+  };
+}
+
+function buildCoordinateTransform(selected) {
+  const first = selected.find((feature) => Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2);
+  if (!first) return null;
+  const [lat0, lon0] = first.controlGeometry[0];
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  return {
+    toPointCm([lat, lon]) {
+      return {
+        X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
+        Y: +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+        Z: 0,
+      };
+    },
+    widthCm(west, east) {
+      return +(((east - west) * metersPerDegreeLon * 100).toFixed(1));
+    },
+    depthCm(south, north) {
+      return +(((north - south) * metersPerDegreeLat * 100).toFixed(1));
+    },
+  };
+}
+
+function buildBuildingData(selected, transform) {
+  return selected
+    .filter((feature) => feature.category === "building" && feature.controlGeometry.length >= 3)
+    .map((feature) => {
+      const bounds = pointBounds(feature.controlGeometry);
+      const center = transform.toPointCm([
+        (bounds.south + bounds.north) * 0.5,
+        (bounds.west + bounds.east) * 0.5,
+      ]);
+      const heightCm = +buildingHeightCm(feature.tags).toFixed(1);
+      return {
+        BuildingKey: feature.key,
+        Name: feature.name || feature.key,
+        Type: feature.tags.building || "building",
+        WidthCm: Math.max(100, Math.abs(transform.widthCm(bounds.west, bounds.east))),
+        DepthCm: Math.max(100, Math.abs(transform.depthCm(bounds.south, bounds.north))),
+        HeightCm: Math.max(100, heightCm),
+        X: center.X,
+        Y: center.Y,
+        Z: heightCm * 0.5,
+      };
+    });
+}
+
 function renderAreaFeatures() {
   areaProcessedLayer.clearLayers();
   const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
@@ -324,13 +421,16 @@ function renderAreaFeatures() {
     if (!areaLayerVisibility.get(feature.category)) continue;
     visibleCount += 1;
     const style = AREA_STYLE[feature.category];
-    const line = L.polyline(feature.controlGeometry, {
+    const lineOptions = {
       color: style.color,
       weight: style.weight,
       opacity: 0.9,
       lineCap: "round",
       lineJoin: "round",
-    }).addTo(areaProcessedLayer);
+    };
+    const line = feature.category === "building"
+      ? L.polygon(feature.controlGeometry, { ...lineOptions, fillOpacity: 0.22 }).addTo(areaProcessedLayer)
+      : L.polyline(feature.controlGeometry, lineOptions).addTo(areaProcessedLayer);
     const roadType = feature.tags.highway || feature.tags.railway || "";
     line.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})`, { sticky: true });
   }
@@ -456,22 +556,16 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
 
 function buildAreaPcgRows() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) => feature.category !== "building" && areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
   );
   if (!selected.length) return null;
 
-  const [lat0, lon0] = selected[0].controlGeometry[0];
-  const metersPerDegreeLat = 111320;
-  const metersPerDegreeLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
-  const toPointCm = ([lat, lon]) => ({
-    X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
-    Y: +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
-    Z: 0,
-  });
+  const transform = buildCoordinateTransform(selected);
+  if (!transform) return null;
 
   const rows = [];
   for (const feature of selected) {
-    const points = feature.controlGeometry.map(toPointCm);
+    const points = feature.controlGeometry.map(transform.toPointCm);
     const widthM = +areaFeatureWidthM(feature).toFixed(2);
     points.forEach((point, pointIndex) => {
       rows.push({
@@ -498,8 +592,7 @@ function buildAreaPcgRows() {
 }
 
 function buildAreaPythonSplineData() {
-  const rows = buildAreaPcgRows();
-  if (!rows) return null;
+  const rows = buildAreaPcgRows() || [];
   const grouped = new Map();
   for (const row of rows) {
     if (!grouped.has(row.SplineKey)) {
@@ -522,9 +615,26 @@ function buildAreaPythonSplineData() {
   return [...grouped.values()];
 }
 
-function buildCompactAreaUnrealPythonScript(splines, streetBpPath) {
+function buildAreaPythonPayload() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+  const transform = buildCoordinateTransform(selected);
+  if (!transform) return null;
+  return {
+    splines: buildAreaPythonSplineData(),
+    buildings: buildBuildingData(selected, transform),
+  };
+}
+
+function buildCompactAreaUnrealPythonScript(payload, streetBpPath, buildingBpPath) {
+  const splines = payload.splines || [];
+  const buildings = payload.buildings || [];
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
+  const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
   const bpPathLiteral = JSON.stringify(streetBpPath);
+  const buildingBpPathLiteral = JSON.stringify(buildingBpPath);
   return `import json
 import re
 
@@ -532,12 +642,16 @@ import unreal
 
 
 STREET_SPLINES = json.loads(${jsonLiteral})
+BUILDINGS = json.loads(${buildingJsonLiteral})
 STREET_BP_PATH = ${bpPathLiteral}
+BUILDING_BP_PATH = ${buildingBpPathLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
+BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
 LINEAR_SPLINES = True
+CUBE_BASE_CM = 100.0
 
 
 def fail(message):
@@ -657,15 +771,51 @@ def create_street_spline_actor(actor_class, row):
     return actor
 
 
+def create_building_actor(actor_class, row):
+    label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('BuildingKey', row.get('Name', 'Building')))}"
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        actor_class,
+        unreal.Vector(
+            float(row["X"]) + WORLD_OFFSET_CM.x,
+            float(row["Y"]) + WORLD_OFFSET_CM.y,
+            float(row["Z"]) + WORLD_OFFSET_CM.z,
+        ),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    actor.set_actor_scale3d(
+        unreal.Vector(
+            max(0.01, float(row["WidthCm"]) / CUBE_BASE_CM),
+            max(0.01, float(row["DepthCm"]) / CUBE_BASE_CM),
+            max(0.01, float(row["HeightCm"]) / CUBE_BASE_CM),
+        )
+    )
+    actor.tags = [
+        unreal.Name("OSMBuilding"),
+        unreal.Name(f"Building:{row.get('Name', '')}"),
+        unreal.Name(f"Typ:{row.get('Type', '')}"),
+        unreal.Name(f"WidthCm:{float(row.get('WidthCm', 0.0)):.1f}"),
+        unreal.Name(f"DepthCm:{float(row.get('DepthCm', 0.0)):.1f}"),
+        unreal.Name(f"HeightCm:{float(row.get('HeightCm', 0.0)):.1f}"),
+    ]
+    return actor
+
+
 def main():
-    actor_class = load_bp_class(STREET_BP_PATH)
+    actor_class = load_bp_class(STREET_BP_PATH) if STREET_SPLINES else None
+    building_actor_class = load_bp_class(BUILDING_BP_PATH) if BUILDINGS else None
     destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
         point_count += len(row["Points"])
         create_street_spline_actor(actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points")
+    for row in BUILDINGS:
+        create_building_actor(building_actor_class, row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} street splines from {point_count} points and {len(BUILDINGS)} buildings")
 
 
 main()
@@ -717,17 +867,19 @@ async function copyPythonCodeFromModal() {
 
 function exportAreaUnrealPython() {
   try {
-    const payload = buildAreaPythonSplineData();
+    const payload = buildAreaPythonPayload();
     if (!payload) {
       setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
       return;
     }
     const streetBpPath = getStreetBpPathForExport();
+    const buildingBpPath = getBuildingBpPathForExport();
     setStoredStreetBpPath(streetBpPath);
-    const code = buildCompactAreaUnrealPythonScript(payload, streetBpPath);
+    setStoredBuildingBpPath(buildingBpPath);
+    const code = buildCompactAreaUnrealPythonScript(payload, streetBpPath, buildingBpPath);
     showPythonCodeModal(code);
-    const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Code: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
+    const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
+    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -797,6 +949,7 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
 });
 
 initStreetBpPathInput();
+initBuildingBpPathInput();
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
