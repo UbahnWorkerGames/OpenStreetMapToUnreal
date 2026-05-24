@@ -98,6 +98,7 @@ const AREA_DEDUPE_DECIMALS = 5;
 const AREA_DRAW_RAW_GEOMETRY = false;
 const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
+const AREA_MAX_REQUEST_KM2 = 5;
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -136,6 +137,14 @@ function areaBoundsCacheKey(bounds, categories = getSelectedAreaCategories()) {
     bounds.getEast().toFixed(6),
     [...categories].sort().join("|"),
   ].join(",");
+}
+
+function areaBoundsSizeKm2(bounds) {
+  if (!bounds?.isValid?.()) return 0;
+  const southWest = [bounds.getSouth(), bounds.getWest()];
+  const southEast = [bounds.getSouth(), bounds.getEast()];
+  const northWest = [bounds.getNorth(), bounds.getWest()];
+  return (haversineM(southWest, southEast) * haversineM(southWest, northWest)) / 1_000_000;
 }
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
@@ -959,7 +968,7 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
 (
 ${clauses}
 );
-out geom;`;
+out geom(${bbox});`;
 }
 
 function outCode(lat, lon, bounds) {
@@ -1292,7 +1301,7 @@ function renderAreaFeatures() {
       }).addTo(areaRawLayer);
     }
 
-    const processed = L.polyline(feature.segment10mGeometry, {
+    const processed = L.polyline(feature.controlGeometry, {
       color: style.color,
       weight: style.weight,
       opacity: 0.9,
@@ -2687,6 +2696,11 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
       return false;
     }
+    const areaKm2 = areaBoundsSizeKm2(bounds);
+    if (areaKm2 > AREA_MAX_REQUEST_KM2) {
+      setStatus(`Bereich zu gross (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
+      return false;
+    }
     const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
     if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
       areaFeatures = areaCache.features;
@@ -2694,7 +2708,8 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       return true;
     }
 
-    setStatus("Lade Bereichsdaten von Overpass ...");
+    const layerLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+    setStatus(`Lade Bereichsdaten von Overpass (${areaKm2.toFixed(2)} km², ${layerLabels}) ...`);
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
