@@ -58,19 +58,21 @@ Exported Unreal coordinates are centimeters from that origin with `X=East`, `Y=N
 Every spawned city street actor gets these tags:
 
 ```text
-CityStreet
-Strasse Name:<street name or spline key>
-Typ:<area category>
-Breite:<width in meters>
-SplineKey:<export key>
-OsmClass:<OSM highway or railway class>
+osm.kind=street_spline
+osm.name=<street name or spline key>
+osm.category=<area category>
+osm.width_m=<width in meters>
+osm.spline_key=<export key>
+osm.class=<OSM highway or railway class>
+osm.layer=<OSM layer>
+osm.closed=<true/false>
 ```
 
 Optional tags:
 
 ```text
-Bridge
-Tunnel
+osm.bridge=true
+osm.tunnel=true
 ```
 
 `Breite` comes from OSM `width` when present, otherwise from `lanes * 3.5`, otherwise from a category default.
@@ -78,17 +80,19 @@ Tunnel
 Every spawned building actor gets these tags:
 
 ```text
-OSMBuilding
-Building:<name or generated key>
-Typ:<OSM building value>
-WidthCm:<width>
-DepthCm:<depth>
-HeightCm:<height>
-YawDeg:<rotation around Z>
-OriginLat:<fixed export origin latitude>
-OriginLon:<fixed export origin longitude>
-CenterLat:<building center latitude>
-CenterLon:<building center longitude>
+osm.kind=building
+osm.building_key=<export key>
+osm.id=<OSM id>
+osm.name=<name or generated key>
+osm.type=<OSM building value>
+osm.width_cm=<width>
+osm.depth_cm=<depth>
+osm.height_cm=<height>
+osm.yaw_deg=<rotation around Z>
+geo.origin_lat=<fixed export origin latitude>
+geo.origin_lon=<fixed export origin longitude>
+geo.center_lat=<building center latitude>
+geo.center_lon=<building center longitude>
 ```
 
 ## Web Tool Workflow

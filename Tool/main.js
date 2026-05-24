@@ -880,17 +880,19 @@ def configure_spline_component(spline_component, row):
 
 def set_actor_tags(actor, row):
     tags = [
-        "CityStreet",
-        f"Strasse Name:{row.get('Street', '') or row.get('SplineKey', '')}",
-        f"Typ:{row.get('Type', '')}",
-        f"Breite:{float(row.get('WidthM', 0.0)):.2f}",
-        f"SplineKey:{row.get('SplineKey', '')}",
-        f"OsmClass:{row.get('OsmClass', '')}",
+        "osm.kind=street_spline",
+        f"osm.name={row.get('Street', '') or row.get('SplineKey', '')}",
+        f"osm.category={row.get('Type', '')}",
+        f"osm.width_m={float(row.get('WidthM', 0.0)):.2f}",
+        f"osm.spline_key={row.get('SplineKey', '')}",
+        f"osm.class={row.get('OsmClass', '')}",
+        f"osm.layer={int(row.get('OsmLayer', 0))}",
+        f"osm.closed={str(bool(row.get('bClosed', False))).lower()}",
     ]
     if row.get("bBridge"):
-        tags.append("Bridge")
+        tags.append("osm.bridge=true")
     if row.get("bTunnel"):
-        tags.append("Tunnel")
+        tags.append("osm.tunnel=true")
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
 
@@ -937,17 +939,19 @@ def create_building_actor(actor_class, row):
         )
     )
     actor.tags = [
-        unreal.Name("OSMBuilding"),
-        unreal.Name(f"Building:{row.get('Name', '')}"),
-        unreal.Name(f"Typ:{row.get('Type', '')}"),
-        unreal.Name(f"WidthCm:{float(row.get('WidthCm', 0.0)):.1f}"),
-        unreal.Name(f"DepthCm:{float(row.get('DepthCm', 0.0)):.1f}"),
-        unreal.Name(f"HeightCm:{float(row.get('HeightCm', 0.0)):.1f}"),
-        unreal.Name(f"YawDeg:{float(row.get('YawDeg', 0.0)):.3f}"),
-        unreal.Name(f"OriginLat:{float(EXPORT_META.get('origin_wgs84', {}).get('lat', 0.0)):.7f}"),
-        unreal.Name(f"OriginLon:{float(EXPORT_META.get('origin_wgs84', {}).get('lon', 0.0)):.7f}"),
-        unreal.Name(f"CenterLat:{float(row.get('CenterWgs84', {}).get('lat', 0.0)):.7f}"),
-        unreal.Name(f"CenterLon:{float(row.get('CenterWgs84', {}).get('lon', 0.0)):.7f}"),
+        unreal.Name("osm.kind=building"),
+        unreal.Name(f"osm.building_key={row.get('BuildingKey', '')}"),
+        unreal.Name(f"osm.id={row.get('OsmId', '')}"),
+        unreal.Name(f"osm.name={row.get('Name', '')}"),
+        unreal.Name(f"osm.type={row.get('Type', '')}"),
+        unreal.Name(f"osm.width_cm={float(row.get('WidthCm', 0.0)):.1f}"),
+        unreal.Name(f"osm.depth_cm={float(row.get('DepthCm', 0.0)):.1f}"),
+        unreal.Name(f"osm.height_cm={float(row.get('HeightCm', 0.0)):.1f}"),
+        unreal.Name(f"osm.yaw_deg={float(row.get('YawDeg', 0.0)):.3f}"),
+        unreal.Name(f"geo.origin_lat={float(EXPORT_META.get('origin_wgs84', {}).get('lat', 0.0)):.7f}"),
+        unreal.Name(f"geo.origin_lon={float(EXPORT_META.get('origin_wgs84', {}).get('lon', 0.0)):.7f}"),
+        unreal.Name(f"geo.center_lat={float(row.get('CenterWgs84', {}).get('lat', 0.0)):.7f}"),
+        unreal.Name(f"geo.center_lon={float(row.get('CenterWgs84', {}).get('lon', 0.0)):.7f}"),
     ]
     return actor
 
