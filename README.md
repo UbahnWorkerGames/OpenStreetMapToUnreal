@@ -31,7 +31,7 @@ Then:
 
 1. Draw an area with `Bereich`, or search a place/postcode with `Ort`.
 2. Select only the OSM layers you need.
-3. Click `OSM Bereich`.
+3. Click `Overpass laden`.
 4. Click `UE Python`.
 5. Review the generated code, then copy it into Unreal Python.
 

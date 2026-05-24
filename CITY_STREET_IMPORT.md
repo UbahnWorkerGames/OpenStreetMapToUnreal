@@ -74,7 +74,7 @@ Tunnel
 
 2. Draw a map area with `Bereich`, or search an area with `Ort`.
 3. Select only the layers you need.
-4. Click `OSM Bereich`.
+4. Click `Overpass laden`.
 5. Click `UE Python`.
 6. Review and copy the Python code from the modal.
 

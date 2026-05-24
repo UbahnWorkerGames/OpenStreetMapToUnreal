@@ -777,4 +777,4 @@ map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
 map.on("mouseup", finishAreaSelection);
 
-setStatus("Bereich ziehen oder Ort suchen, dann OSM Bereich laden.");
+setStatus("Bereich ziehen oder Ort suchen, dann Overpass laden.");
