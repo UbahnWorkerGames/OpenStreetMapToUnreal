@@ -25,6 +25,8 @@ const AREA_SIMPLIFY_TOLERANCE_M = 3;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
+const DEFAULT_STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest";
+const STREET_BP_PATH_STORAGE_KEY = "osm-to-unreal.streetBpPath";
 
 const map = L.map("map", { zoomControl: true, minZoom: 2, maxZoom: 19 }).setView([52.52, 13.405], 12);
 
@@ -52,6 +54,29 @@ let areaDraftRect = null;
 let areaFeatures = [];
 let areaCache = null;
 let latestAreaPythonScript = "";
+
+function getStoredStreetBpPath() {
+  const stored = window.localStorage.getItem(STREET_BP_PATH_STORAGE_KEY);
+  return stored?.trim() || DEFAULT_STREET_BP_PATH;
+}
+
+function setStoredStreetBpPath(value) {
+  const normalized = String(value || "").trim();
+  window.localStorage.setItem(STREET_BP_PATH_STORAGE_KEY, normalized || DEFAULT_STREET_BP_PATH);
+}
+
+function getStreetBpPathForExport() {
+  const input = document.getElementById("street-bp-path-input");
+  return input?.value?.trim() || getStoredStreetBpPath();
+}
+
+function initStreetBpPathInput() {
+  const input = document.getElementById("street-bp-path-input");
+  if (!input) return;
+  input.value = getStoredStreetBpPath();
+  input.addEventListener("change", () => setStoredStreetBpPath(input.value));
+  input.addEventListener("blur", () => setStoredStreetBpPath(input.value));
+}
 
 function setStatus(message, isError = false) {
   const el = document.getElementById("status");
@@ -487,8 +512,9 @@ function buildAreaPythonSplineData() {
   return [...grouped.values()];
 }
 
-function buildCompactAreaUnrealPythonScript(splines) {
+function buildCompactAreaUnrealPythonScript(splines, streetBpPath) {
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
+  const bpPathLiteral = JSON.stringify(streetBpPath);
   return `import json
 import re
 
@@ -496,7 +522,7 @@ import unreal
 
 
 STREET_SPLINES = json.loads(${jsonLiteral})
-STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest"
+STREET_BP_PATH = ${bpPathLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
@@ -562,7 +588,7 @@ def find_spline_component(actor):
                 return component
     if spline_components:
         return spline_components[0]
-    fail(f"No SplineComponent found on actor '{actor.get_actor_label()}'. Add one to BP_CityTest.")
+    fail(f"No SplineComponent found on actor '{actor.get_actor_label()}'. Add one to the configured street Blueprint.")
 
 
 def set_editor_property_if_present(obj, property_name, value):
@@ -686,7 +712,9 @@ function exportAreaUnrealPython() {
       setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
       return;
     }
-    const code = buildCompactAreaUnrealPythonScript(payload);
+    const streetBpPath = getStreetBpPathForExport();
+    setStoredStreetBpPath(streetBpPath);
+    const code = buildCompactAreaUnrealPythonScript(payload, streetBpPath);
     showPythonCodeModal(code);
     const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
     setStatus(`UE-Python-Code: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
@@ -772,6 +800,8 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
     if (areaFeatures.length) renderAreaFeatures();
   });
 });
+
+initStreetBpPathInput();
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);

@@ -25,7 +25,7 @@ Do not commit local/generated runtime output:
 
 ## Unreal Blueprint Requirement
 
-Create or keep this Blueprint in the Unreal project:
+Set `Street Path BP` in the web tool to the Blueprint you want to spawn. Default:
 
 ```text
 /Game/_UbahnWorkerGames/TEST/BP_CityTest
@@ -38,7 +38,7 @@ StreetSpline
 Spline
 ```
 
-If neither name exists, it uses the first `SplineComponent` it finds. If the Blueprint has no `SplineComponent`, the import fails loudly.
+The value is saved in the browser's local storage. If neither component name exists, the importer uses the first `SplineComponent` it finds. If the Blueprint has no `SplineComponent`, the import fails loudly.
 
 ## Actor Tags Written By The Importer
 
@@ -72,11 +72,12 @@ Tunnel
    npm run dev
    ```
 
-2. Draw a map area with `Bereich`, or search an area with `Ort`.
-3. Select only the layers you need.
-4. Click `Overpass laden`.
-5. Click `UE Python`.
-6. Review and copy the Python code from the modal.
+2. Set `Street Path BP` to your Unreal Blueprint path.
+3. Draw a map area with `Bereich`, or search an area with `Ort`.
+4. Select only the layers you need.
+5. Click `Overpass laden`.
+6. Click `UE Python`.
+7. Review and copy the Python code from the modal.
 
 Large areas are allowed for lighter layers, but `Stadtstrasse` and `Service` should stay small because they produce many segments.
 
@@ -102,7 +103,7 @@ The generated script deletes existing actors whose labels start with:
 CITY_STREET_
 ```
 
-Then it recreates one `BP_CityTest` actor per exported street spline and writes the spline points into the Blueprint's `SplineComponent`. That is intentional for repeatable imports, but it means actor labels matter.
+Then it recreates one actor per exported street spline using the configured Blueprint and writes the spline points into the Blueprint's `SplineComponent`. That is intentional for repeatable imports, but it means actor labels matter.
 
 ## Expected Result
 

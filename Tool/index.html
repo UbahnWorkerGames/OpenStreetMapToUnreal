@@ -97,6 +97,30 @@
         width: 7rem;
       }
 
+      .path-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 8px;
+      }
+
+      .path-field label {
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .path-field input {
+        width: 100%;
+        min-width: 0;
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+      }
+
       #status {
         margin: 10px 0 0;
         font-size: 0.8rem;
@@ -190,6 +214,10 @@
   <body>
     <div class="panel">
       <h1>OSM to Unreal</h1>
+      <div class="path-field">
+        <label for="street-bp-path-input">Street Path BP</label>
+        <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+      </div>
       <div class="row">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
         <button type="button" class="btn-clear" id="btn-area-load" title="OSM-Daten im gewaehlten Bereich von Overpass laden">Overpass laden</button>

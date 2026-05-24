@@ -2,7 +2,7 @@
 
 Web tool for turning OpenStreetMap area data into Unreal street spline actors.
 
-The project is focused on OSM area selection, street/rail way extraction, and generated Unreal Python for `BP_CityTest`.
+The project is focused on OSM area selection, street/rail way extraction, and generated Unreal Python for a configurable street Blueprint.
 
 ## What Is Here
 
@@ -29,11 +29,12 @@ npm run dev
 
 Then:
 
-1. Draw an area with `Bereich`, or search a place/postcode with `Ort`.
-2. Select only the OSM layers you need.
-3. Click `Overpass laden`.
-4. Click `UE Python`.
-5. Review the generated code, then copy it into Unreal Python.
+1. Set `Street Path BP` to your Unreal Blueprint path.
+2. Draw an area with `Bereich`, or search a place/postcode with `Ort`.
+3. Select only the OSM layers you need.
+4. Click `Overpass laden`.
+5. Click `UE Python`.
+6. Review the generated code, then copy it into Unreal Python.
 
 ## Build Check
 
@@ -45,7 +46,7 @@ npm run build
 
 ## Unreal Target
 
-The generated Python expects this Blueprint:
+The generated Python expects the Blueprint path configured in the tool. Default:
 
 ```text
 /Game/_UbahnWorkerGames/TEST/BP_CityTest
