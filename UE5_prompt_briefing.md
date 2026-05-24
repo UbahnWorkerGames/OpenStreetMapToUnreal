@@ -111,6 +111,80 @@ Der Export soll mindestens diese Inhalte haben:
 - `ToM`
 - `StationName`
 
+### City-Street-PCG-DataTable
+
+Der PCG-Export `ue-pcg-area-splines.json` ist absichtlich flach, weil PCG `Load Data Table` keine `TArray<Struct>`-Property als Attribut laden kann. Eine zusammenhaengende Strasse entsteht ueber mehrere Zeilen mit gleichem `SplineKey`, sortiert nach `PointIndex`.
+
+Eine DataTable-Zeile entspricht einem Spline-Punkt:
+
+- `Name`: eindeutiger DataTable Row Name, z. B. `<SplineKey>_0000`
+- `SplineKey`: gemeinsame ID aller Punkte einer Strasse/Spline
+- `PointIndex`: Reihenfolge innerhalb der Spline
+- `PointCount`: Anzahl Punkte dieser Spline
+- `Type`
+- `Shape`
+- `Street`
+- `OsmClass`
+- `bBridge`
+- `bTunnel`
+- `OsmLayer`
+- `bClosed`
+- `X`
+- `Y`
+- `Z`
+
+Passende UE-Struct fuer PCG:
+
+```cpp
+USTRUCT(BlueprintType)
+struct UBAHNWORKER_API FST_CityStreetPcgPoint : public FTableRowBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString SplineKey;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 PointIndex = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 PointCount = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Type;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Shape;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString Street;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString OsmClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bBridge = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bTunnel = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 OsmLayer = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bClosed = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double X = 0.0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double Y = 0.0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    double Z = 0.0;
+};
+```
+
 ## Wichtige Designentscheidung
 
 Die UE-Seite soll die Route **nicht neu interpretieren**.
