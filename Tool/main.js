@@ -10,6 +10,7 @@ const AREA_STYLE = {
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
   building: { color: "#64748b", weight: 1.2 },
+  traffic_sign: { color: "#e11d48", weight: 1.2 },
 };
 
 const AREA_LAYER_LABELS = {
@@ -21,6 +22,7 @@ const AREA_LAYER_LABELS = {
   rail_train: "Zug",
   rail_subway: "Subway",
   building: "Gebaeude",
+  traffic_sign: "Verkehrsschild",
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
@@ -201,6 +203,8 @@ function areaOverpassFilterForCategory(category) {
       return 'way["railway"="subway"]';
     case "building":
       return 'way["building"]';
+    case "traffic_sign":
+      return 'node["traffic_sign"]';
     default:
       return null;
   }
@@ -273,6 +277,10 @@ function areaGroupName(tags, category, id) {
   return tags?.name || tags?.ref || `${AREA_LAYER_LABELS[category]} ${id}`;
 }
 
+function trafficSignName(tags = {}, id) {
+  return tags.name || tags.ref || tags.traffic_sign || `Verkehrsschild ${id}`;
+}
+
 function isClosedPolyline(poly, toleranceM = 2) {
   return Array.isArray(poly) && poly.length >= 4 && haversineM(poly[0], poly[poly.length - 1]) <= toleranceM;
 }
@@ -333,6 +341,26 @@ function buildAreaFeatures(data) {
   const features = [];
   const seen = new Set();
   for (const el of data.elements || []) {
+    if (el.type === "node" && Number.isFinite(el.lat) && Number.isFinite(el.lon) && el.tags?.traffic_sign) {
+      const category = "traffic_sign";
+      const name = trafficSignName(el.tags || {}, el.id);
+      const key = normalizeAreaKey(`${category}_${name}_${el.id}`);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      features.push({
+        id: el.id,
+        key,
+        category,
+        shape: "point",
+        closed: false,
+        name,
+        tags: el.tags || {},
+        point: [el.lat, el.lon],
+        controlGeometry: [[el.lat, el.lon]],
+      });
+      continue;
+    }
+
     if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
     const category = classifyAreaWay(el.tags || {});
     if (!category) continue;
@@ -372,7 +400,7 @@ function pointBounds(points) {
 }
 
 function buildCoordinateTransform(selected) {
-  if (!selected.some((feature) => Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2)) return null;
+  if (!selected.some((feature) => Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1)) return null;
   const lat0 = BERLIN_EXPORT_ORIGIN_WGS84.lat;
   const lon0 = BERLIN_EXPORT_ORIGIN_WGS84.lon;
   const metersPerDegreeLat = 111320;
@@ -482,17 +510,41 @@ function buildBuildingData(selected, transform) {
     .filter(Boolean);
 }
 
+function buildTrafficSignData(selected, transform) {
+  return selected
+    .filter((feature) => feature.category === "traffic_sign" && Array.isArray(feature.point))
+    .map((feature) => {
+      const point = transform.toPointCm(feature.point);
+      return {
+        SignKey: feature.key,
+        OsmId: feature.id,
+        Name: feature.name || feature.key,
+        Type: feature.tags.traffic_sign || "",
+        Direction: feature.tags.direction || "",
+        CenterWgs84: {
+          lat: +feature.point[0].toFixed(7),
+          lon: +feature.point[1].toFixed(7),
+        },
+        X: point.X,
+        Y: point.Y,
+        Z: 0,
+      };
+    });
+}
+
 function renderAreaFeatures() {
   areaProcessedLayer.clearLayers();
   const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
   let visibleCount = 0;
   let visibleBuildings = 0;
   let visibleSplines = 0;
+  let visibleSigns = 0;
   for (const feature of areaFeatures) {
     counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
     if (!areaLayerVisibility.get(feature.category)) continue;
     visibleCount += 1;
     if (feature.category === "building") visibleBuildings += 1;
+    else if (feature.category === "traffic_sign") visibleSigns += 1;
     else visibleSplines += 1;
     const style = AREA_STYLE[feature.category];
     const lineOptions = {
@@ -510,6 +562,15 @@ function renderAreaFeatures() {
         fillOpacity: 0.38,
       }).addTo(areaProcessedLayer);
       polygon.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${heightM.toFixed(1)} m)`, { sticky: true });
+    } else if (feature.category === "traffic_sign") {
+      const marker = L.circleMarker(feature.point, {
+        radius: 4,
+        color: style.color,
+        weight: 2,
+        fillColor: style.color,
+        fillOpacity: 0.85,
+      }).addTo(areaProcessedLayer);
+      marker.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name}`, { sticky: true });
     } else {
       const line = L.polyline(feature.controlGeometry, lineOptions).addTo(areaProcessedLayer);
       const roadType = feature.tags.highway || feature.tags.railway || "";
@@ -521,7 +582,7 @@ function renderAreaFeatures() {
     .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
     .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
     .join(" · ");
-  setStatus(`Bereich geladen: ${visibleSplines} Splines / ${visibleBuildings} Gebaeude sichtbar (${visibleCount}/${areaFeatures.length})${summary ? ` · ${summary}` : ""}`);
+  setStatus(`Bereich geladen: ${visibleSplines} Splines / ${visibleBuildings} Gebaeude / ${visibleSigns} Schilder sichtbar (${visibleCount}/${areaFeatures.length})${summary ? ` · ${summary}` : ""}`);
 }
 
 function setSelectedAreaBounds(bounds, shouldFitMap = false) {
@@ -673,7 +734,12 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
 
 function buildAreaPcgRows() {
   const selected = areaFeatures.filter(
-    (feature) => feature.category !== "building" && areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) =>
+      feature.category !== "building" &&
+      feature.category !== "traffic_sign" &&
+      areaLayerVisibility.get(feature.category) &&
+      Array.isArray(feature.controlGeometry) &&
+      feature.controlGeometry.length >= 2,
   );
   if (!selected.length) return null;
 
@@ -734,7 +800,7 @@ function buildAreaPythonSplineData() {
 
 function buildAreaPythonPayload() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1,
   );
   if (!selected.length) return null;
   const transform = buildCoordinateTransform(selected);
@@ -749,18 +815,21 @@ function buildAreaPythonPayload() {
     },
     splines: buildAreaPythonSplineData(),
     buildings: buildBuildingData(selected, transform),
+    traffic_signs: buildTrafficSignData(selected, transform),
   };
 }
 
 function buildCompactAreaUnrealPythonScript(payload, streetBpPath, buildingBpPath) {
   const splines = payload.splines || [];
   const buildings = payload.buildings || [];
+  const trafficSigns = payload.traffic_signs || [];
   const exportMeta = {
     origin_wgs84: payload.origin_wgs84,
     coordinate_system: payload.coordinate_system,
   };
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
   const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
+  const trafficSignJsonLiteral = JSON.stringify(JSON.stringify(trafficSigns));
   const metaJsonLiteral = JSON.stringify(JSON.stringify(exportMeta));
   const bpPathLiteral = JSON.stringify(streetBpPath);
   const buildingBpPathLiteral = JSON.stringify(buildingBpPath);
@@ -772,11 +841,13 @@ import unreal
 
 STREET_SPLINES = json.loads(${jsonLiteral})
 BUILDINGS = json.loads(${buildingJsonLiteral})
+TRAFFIC_SIGNS = json.loads(${trafficSignJsonLiteral})
 EXPORT_META = json.loads(${metaJsonLiteral})
 STREET_BP_PATH = ${bpPathLiteral}
 BUILDING_BP_PATH = ${buildingBpPathLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
+TRAFFIC_SIGN_ACTOR_LABEL_PREFIX = "OSM_SIGN"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
@@ -955,6 +1026,41 @@ def create_building_actor(actor_class, row):
     return actor
 
 
+def create_traffic_sign_actor(row):
+    label = f"{TRAFFIC_SIGN_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('SignKey', row.get('Name', 'Sign')))}"
+    location = unreal.Vector(
+        float(row["X"]) + WORLD_OFFSET_CM.x,
+        float(row["Y"]) + WORLD_OFFSET_CM.y,
+        float(row.get("Z", 0.0)) + WORLD_OFFSET_CM.z,
+    )
+    actor = find_actor_by_label(label) if UPDATE_EXISTING_ACTORS else None
+    if actor is None:
+        actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+            unreal.Actor,
+            location,
+            unreal.Rotator(0.0, 0.0, 0.0),
+        )
+        if actor is None:
+            fail(f"Failed to spawn actor '{label}'")
+        actor.set_actor_label(label)
+    else:
+        actor.set_actor_location(location, False, False)
+    actor.tags = [
+        unreal.Name("traffic_sign"),
+        unreal.Name(str(row.get("SignKey", ""))),
+        unreal.Name(str(row.get("OsmId", ""))),
+        unreal.Name(str(row.get("Name", ""))),
+        unreal.Name(str(row.get("Type", ""))),
+        unreal.Name(str(row.get("Direction", ""))),
+        unreal.Name(f"{float(row.get('X', 0.0)):.1f}"),
+        unreal.Name(f"{float(row.get('Y', 0.0)):.1f}"),
+        unreal.Name(f"{float(row.get('Z', 0.0)):.1f}"),
+        unreal.Name(f"{float(row.get('CenterWgs84', {}).get('lat', 0.0)):.7f}"),
+        unreal.Name(f"{float(row.get('CenterWgs84', {}).get('lon', 0.0)):.7f}"),
+    ]
+    return actor
+
+
 def main():
     actor_class = load_bp_class(STREET_BP_PATH) if STREET_SPLINES else None
     building_actor_class = load_bp_class(BUILDING_BP_PATH) if BUILDINGS else None
@@ -962,6 +1068,7 @@ def main():
     if DELETE_BEFORE_IMPORT:
         destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
         destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
+        destroy_existing_actor_with_prefix(f"{TRAFFIC_SIGN_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
@@ -969,7 +1076,9 @@ def main():
         create_street_spline_actor(actor_class, row)
     for row in BUILDINGS:
         create_building_actor(building_actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} street splines from {point_count} points and {len(BUILDINGS)} buildings")
+    for row in TRAFFIC_SIGNS:
+        create_traffic_sign_actor(row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} street splines from {point_count} points, {len(BUILDINGS)} buildings and {len(TRAFFIC_SIGNS)} traffic signs")
 
 
 main()
@@ -1033,7 +1142,7 @@ function exportAreaUnrealPython() {
     const code = buildCompactAreaUnrealPythonScript(payload, streetBpPath, buildingBpPath);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude eingebettet`);
+    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude / ${payload.traffic_signs.length} Schilder eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -1131,3 +1240,4 @@ initBuildingBpPathInput();
 map.getContainer().addEventListener("pointerdown", beginAreaSelection);
 
 setStatus("Bereich ziehen oder Ort suchen, dann Overpass laden.");
+

@@ -63,6 +63,14 @@ Rotation.Yaw = footprint rotation in degrees
 Scale.X/Y/Z = width/depth/height divided by 100 cm cube size
 ```
 
+For traffic signs, the Actor transform is the primary placement data:
+
+```text
+Location.X = east offset in cm from Berlin origin
+Location.Y = north offset in cm from Berlin origin
+Location.Z = 0
+```
+
 ## Actor Tags Written By The Importer
 
 Every spawned city street actor gets raw value tags in this fixed order:
@@ -99,6 +107,22 @@ Every spawned building actor gets raw value tags in this fixed order:
 [11] <yaw degrees>
 [12] <building center latitude>
 [13] <building center longitude>
+```
+
+Every spawned traffic sign actor gets raw value tags in this fixed order:
+
+```text
+[0] traffic_sign
+[1] <export sign key>
+[2] <OSM id>
+[3] <name, ref, or traffic_sign value>
+[4] <OSM traffic_sign value>
+[5] <OSM direction value>
+[6] <X cm from Berlin origin>
+[7] <Y cm from Berlin origin>
+[8] <Z cm>
+[9] <sign latitude>
+[10] <sign longitude>
 ```
 
 ## Web Tool Workflow
@@ -141,6 +165,7 @@ By default, the generated script keeps existing actors. If an actor with the sam
 ```text
 CITY_STREET_
 OSM_BUILDING_
+OSM_SIGN_
 ```
 
 The generated actor labels matter because they are used to update existing imported actors:
@@ -152,9 +177,10 @@ After running the Python code, the level should contain actors named like:
 ```text
 CITY_STREET_<spline_key>
 OSM_BUILDING_<building_key>
+OSM_SIGN_<sign_key>
 ```
 
-Street actors should contain filled splines. Building actors should be scaled cubes with the tags listed above.
+Street actors should contain filled splines. Building actors should be scaled cubes with the tags listed above. Traffic sign actors are empty marker actors with raw OSM sign values and Berlin-origin coordinates in their tags.
 
 ## Failure Policy
 
