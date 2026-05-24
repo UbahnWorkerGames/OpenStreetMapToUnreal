@@ -421,10 +421,14 @@ function renderAreaFeatures() {
   areaProcessedLayer.clearLayers();
   const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
   let visibleCount = 0;
+  let visibleBuildings = 0;
+  let visibleSplines = 0;
   for (const feature of areaFeatures) {
     counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
     if (!areaLayerVisibility.get(feature.category)) continue;
     visibleCount += 1;
+    if (feature.category === "building") visibleBuildings += 1;
+    else visibleSplines += 1;
     const style = AREA_STYLE[feature.category];
     const lineOptions = {
       color: style.color,
@@ -433,18 +437,26 @@ function renderAreaFeatures() {
       lineCap: "round",
       lineJoin: "round",
     };
-    const line = feature.category === "building"
-      ? L.polygon(feature.controlGeometry, { ...lineOptions, fillOpacity: 0.22 }).addTo(areaProcessedLayer)
-      : L.polyline(feature.controlGeometry, lineOptions).addTo(areaProcessedLayer);
-    const roadType = feature.tags.highway || feature.tags.railway || "";
-    line.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})`, { sticky: true });
+    if (feature.category === "building") {
+      const heightM = buildingHeightCm(feature.tags) / 100;
+      const polygon = L.polygon(feature.controlGeometry, {
+        ...lineOptions,
+        fillColor: style.color,
+        fillOpacity: 0.38,
+      }).addTo(areaProcessedLayer);
+      polygon.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${heightM.toFixed(1)} m)`, { sticky: true });
+    } else {
+      const line = L.polyline(feature.controlGeometry, lineOptions).addTo(areaProcessedLayer);
+      const roadType = feature.tags.highway || feature.tags.railway || "";
+      line.bindTooltip(`${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})`, { sticky: true });
+    }
   }
 
   const summary = [...counts.entries()]
     .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
     .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
     .join(" · ");
-  setStatus(`Bereich geladen: ${visibleCount}/${areaFeatures.length} Splines sichtbar${summary ? ` · ${summary}` : ""}`);
+  setStatus(`Bereich geladen: ${visibleSplines} Splines / ${visibleBuildings} Gebaeude sichtbar (${visibleCount}/${areaFeatures.length})${summary ? ` · ${summary}` : ""}`);
 }
 
 function setSelectedAreaBounds(bounds, shouldFitMap = false) {
@@ -1003,7 +1015,11 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
   areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
   input.addEventListener("change", () => {
     areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
-    if (areaFeatures.length) renderAreaFeatures();
+    if (!areaFeatures.length) return;
+    renderAreaFeatures();
+    if (input.checked && !areaFeatures.some((feature) => feature.category === input.dataset.areaLayer)) {
+      setStatus(`${AREA_LAYER_LABELS[input.dataset.areaLayer]} ist in den geladenen Daten nicht enthalten. Mit aktivem Layer nochmal Overpass laden.`, true);
+    }
   });
 });
 
