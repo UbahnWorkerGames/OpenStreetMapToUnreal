@@ -1874,6 +1874,39 @@ function areaTagInt(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function areaTagFloat(value) {
+  if (value == null) return null;
+  const normalized = String(value).replace(",", ".").match(/[0-9]+(?:\.[0-9]+)?/);
+  if (!normalized) return null;
+  const n = Number.parseFloat(normalized[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function areaFeatureWidthM(feature) {
+  const explicitWidth = areaTagFloat(feature.tags.width);
+  if (explicitWidth != null) return explicitWidth;
+
+  const lanes = areaTagFloat(feature.tags.lanes);
+  if (lanes != null && lanes > 0) return lanes * 3.5;
+
+  switch (feature.category) {
+    case "motorway":
+      return 14;
+    case "major_road":
+      return 9;
+    case "city_road":
+      return 6;
+    case "service":
+      return 3.5;
+    case "rail_tram":
+    case "rail_train":
+    case "rail_subway":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
 function areaPcgRowName(key, pointIndex) {
   return `${key}_${String(pointIndex).padStart(4, "0")}`;
 }
@@ -1955,6 +1988,7 @@ function buildAreaPythonSplineData() {
       Shape: feature.shape || "line",
       Street: feature.name || "",
       OsmClass: areaFeatureExportClass(feature),
+      WidthM: +areaFeatureWidthM(feature).toFixed(2),
       bBridge: areaTagBool(feature.tags.bridge),
       bTunnel: areaTagBool(feature.tags.tunnel),
       OsmLayer: areaTagInt(feature.tags.layer),
@@ -2216,8 +2250,9 @@ import unreal
 
 
 STREET_SPLINES = json.loads(${jsonLiteral})
+STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest"
 ACTOR_LABEL_PREFIX = "CITY_STREET"
-SPLINE_COMPONENT_NAME = "StreetSpline"
+SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
 LINEAR_SPLINES = True
@@ -2232,6 +2267,13 @@ def destroy_existing_actor_with_prefix(prefix):
     for actor in unreal.EditorLevelLibrary.get_all_level_actors():
         if actor.get_actor_label().startswith(prefix):
             unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def load_bp_class(asset_path):
+    asset_class = unreal.EditorAssetLibrary.load_blueprint_class(asset_path)
+    if asset_class is None:
+        fail(f"Could not load Blueprint class: {asset_path}")
+    return asset_class
 
 
 def sanitize_label_part(value):
@@ -2266,32 +2308,15 @@ def require_spline(row, index):
     return row
 
 
-def spawn_empty_actor(label):
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
-        unreal.Actor,
-        unreal.Vector(0.0, 0.0, 0.0),
-        unreal.Rotator(0.0, 0.0, 0.0),
-    )
-    if actor is None:
-        fail(f"Failed to spawn actor '{label}'")
-    actor.set_actor_label(label)
-    return actor
-
-
-def add_spline_component(actor):
-    if not hasattr(actor, "add_component_by_class"):
-        fail("Actor.add_component_by_class is not exposed in this Unreal build.")
-    component = actor.add_component_by_class(
-        unreal.SplineComponent,
-        False,
-        unreal.Transform(),
-        False,
-    )
-    if component is None:
-        fail(f"Failed to add SplineComponent to actor '{actor.get_actor_label()}'")
-    component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
-    component.rename(SPLINE_COMPONENT_NAME)
-    return component
+def find_spline_component(actor):
+    spline_components = actor.get_components_by_class(unreal.SplineComponent)
+    for component_name in SPLINE_COMPONENT_NAMES:
+        for component in spline_components:
+            if component.get_name() == component_name:
+                return component
+    if spline_components:
+        return spline_components[0]
+    fail(f"No SplineComponent found on actor '{actor.get_actor_label()}'. Add one to BP_CityTest.")
 
 
 def set_editor_property_if_present(obj, property_name, value):
@@ -2321,11 +2346,11 @@ def configure_spline_component(spline_component, row):
 def set_actor_tags(actor, row):
     tags = [
         "CityStreet",
-        row.get("SplineKey", ""),
-        row.get("Type", ""),
-        row.get("Shape", ""),
-        row.get("OsmClass", ""),
-        row.get("Street", ""),
+        f"Strasse Name:{row.get('Street', '') or row.get('SplineKey', '')}",
+        f"Typ:{row.get('Type', '')}",
+        f"Breite:{float(row.get('WidthM', 0.0)):.2f}",
+        f"SplineKey:{row.get('SplineKey', '')}",
+        f"OsmClass:{row.get('OsmClass', '')}",
     ]
     if row.get("bBridge"):
         tags.append("Bridge")
@@ -2334,22 +2359,30 @@ def set_actor_tags(actor, row):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
 
-def create_street_spline_actor(row):
+def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
-    actor = spawn_empty_actor(label)
-    spline_component = add_spline_component(actor)
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        actor_class,
+        unreal.Vector(0.0, 0.0, 0.0),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row)
     set_actor_tags(actor, row)
     return actor
 
 
 def main():
+    actor_class = load_bp_class(STREET_BP_PATH)
     destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
         point_count += len(row["Points"])
-        create_street_spline_actor(row)
+        create_street_spline_actor(actor_class, row)
     unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points")
 
 
