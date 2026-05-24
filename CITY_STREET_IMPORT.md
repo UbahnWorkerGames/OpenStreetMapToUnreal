@@ -40,7 +40,18 @@ Spline
 
 The value is saved in the browser's local storage. If neither component name exists, the importer uses the first `SplineComponent` it finds. If the Blueprint has no `SplineComponent`, the import fails loudly.
 
-Set `Building Cube BP` to a Blueprint that contains a `100 x 100 x 100 cm` cube. The generated Python scales that actor to the exported building width, depth, and height.
+Set `Building Cube BP` to a Blueprint that contains a `100 x 100 x 100 cm` cube. The generated Python rotates and scales that actor to the exported building footprint width, depth, yaw, and height.
+
+## Coordinate Origin
+
+Area exports use one fixed Berlin WGS84 origin:
+
+```text
+lat 52.520008
+lon 13.404954
+```
+
+Exported Unreal coordinates are centimeters from that origin with `X=East`, `Y=North`, and `Z=Up`. Because the origin is fixed, separate exports from different Berlin areas can be imported into the same level and will keep their real distance from each other.
 
 ## Actor Tags Written By The Importer
 
@@ -73,6 +84,11 @@ Typ:<OSM building value>
 WidthCm:<width>
 DepthCm:<depth>
 HeightCm:<height>
+YawDeg:<rotation around Z>
+OriginLat:<fixed export origin latitude>
+OriginLon:<fixed export origin longitude>
+CenterLat:<building center latitude>
+CenterLon:<building center longitude>
 ```
 
 ## Web Tool Workflow
@@ -110,14 +126,14 @@ The `UE Python` modal generates executable Python code. Treat it like any other 
 - save or commit your level before running large imports
 - do not paste and execute Python code from unknown sources
 
-The generated script deletes existing street actors and building actors whose labels start with:
+By default, the generated script keeps existing actors. If an actor with the same generated label already exists, it is updated in place; otherwise a new actor is spawned. Set `DELETE_BEFORE_IMPORT = True` in the generated script only when you intentionally want to replace all generated actors with these prefixes:
 
 ```text
 CITY_STREET_
 OSM_BUILDING_
 ```
 
-Then it recreates one actor per exported street spline and one cube actor per exported building using the configured Blueprints. That is intentional for repeatable imports, but it means actor labels matter.
+The generated actor labels matter because they are used to update existing imported actors:
 
 ## Expected Result
 

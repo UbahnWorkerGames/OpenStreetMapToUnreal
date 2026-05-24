@@ -34,6 +34,7 @@ const DEFAULT_BUILDING_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.B
 const STREET_BP_PATH_STORAGE_KEY = "osm-to-unreal.streetBpPath";
 const BUILDING_BP_PATH_STORAGE_KEY = "osm-to-unreal.buildingBpPath";
 const DEFAULT_BUILDING_HEIGHT_CM = 300;
+const BERLIN_EXPORT_ORIGIN_WGS84 = { lat: 52.520008, lon: 13.404954 };
 
 const map = L.map("map", { zoomControl: true, minZoom: 2, maxZoom: 19 }).setView([52.52, 13.405], 12);
 
@@ -371,12 +372,14 @@ function pointBounds(points) {
 }
 
 function buildCoordinateTransform(selected) {
-  const first = selected.find((feature) => Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2);
-  if (!first) return null;
-  const [lat0, lon0] = first.controlGeometry[0];
+  if (!selected.some((feature) => Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2)) return null;
+  const lat0 = BERLIN_EXPORT_ORIGIN_WGS84.lat;
+  const lon0 = BERLIN_EXPORT_ORIGIN_WGS84.lon;
   const metersPerDegreeLat = 111320;
   const metersPerDegreeLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
   return {
+    originWgs84: { lat: lat0, lon: lon0 },
+    metersPerDegree: { lat: metersPerDegreeLat, lon: metersPerDegreeLon },
     toPointCm([lat, lon]) {
       return {
         X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
@@ -393,28 +396,90 @@ function buildCoordinateTransform(selected) {
   };
 }
 
+function normalizeDegrees(degrees) {
+  let normalized = degrees;
+  while (normalized <= -180) normalized += 360;
+  while (normalized > 180) normalized -= 360;
+  return +normalized.toFixed(3);
+}
+
+function buildingFootprintMetrics(feature, transform) {
+  const points = feature.controlGeometry.map((point) => transform.toPointCm(point));
+  const openPoints = points.length > 1 && points[0].X === points.at(-1).X && points[0].Y === points.at(-1).Y ? points.slice(0, -1) : points;
+  if (openPoints.length < 3) return null;
+
+  let longestEdge = null;
+  for (let index = 0; index < openPoints.length; index += 1) {
+    const a = openPoints[index];
+    const b = openPoints[(index + 1) % openPoints.length];
+    const dx = b.X - a.X;
+    const dy = b.Y - a.Y;
+    const lengthSq = dx * dx + dy * dy;
+    if (!longestEdge || lengthSq > longestEdge.lengthSq) longestEdge = { dx, dy, lengthSq };
+  }
+  if (!longestEdge || longestEdge.lengthSq <= 0) return null;
+
+  const yawRad = Math.atan2(longestEdge.dy, longestEdge.dx);
+  const axisX = { x: Math.cos(yawRad), y: Math.sin(yawRad) };
+  const axisY = { x: -axisX.y, y: axisX.x };
+  const projected = openPoints.map((point) => ({
+    u: point.X * axisX.x + point.Y * axisX.y,
+    v: point.X * axisY.x + point.Y * axisY.y,
+  }));
+  const minU = Math.min(...projected.map((point) => point.u));
+  const maxU = Math.max(...projected.map((point) => point.u));
+  const minV = Math.min(...projected.map((point) => point.v));
+  const maxV = Math.max(...projected.map((point) => point.v));
+  const centerU = (minU + maxU) * 0.5;
+  const centerV = (minV + maxV) * 0.5;
+
+  return {
+    center: {
+      X: +(centerU * axisX.x + centerV * axisY.x).toFixed(1),
+      Y: +(centerU * axisX.y + centerV * axisY.y).toFixed(1),
+      Z: 0,
+    },
+    widthCm: +Math.max(100, maxU - minU).toFixed(1),
+    depthCm: +Math.max(100, maxV - minV).toFixed(1),
+    yawDeg: normalizeDegrees((yawRad * 180) / Math.PI),
+    footprintCm: openPoints.map((point) => ({ X: point.X, Y: point.Y, Z: point.Z })),
+  };
+}
+
 function buildBuildingData(selected, transform) {
   return selected
     .filter((feature) => feature.category === "building" && feature.controlGeometry.length >= 3)
     .map((feature) => {
       const bounds = pointBounds(feature.controlGeometry);
-      const center = transform.toPointCm([
-        (bounds.south + bounds.north) * 0.5,
-        (bounds.west + bounds.east) * 0.5,
-      ]);
+      const metrics = buildingFootprintMetrics(feature, transform);
+      if (!metrics) return null;
       const heightCm = +buildingHeightCm(feature.tags).toFixed(1);
       return {
         BuildingKey: feature.key,
+        OsmId: feature.id,
         Name: feature.name || feature.key,
         Type: feature.tags.building || "building",
-        WidthCm: Math.max(100, Math.abs(transform.widthCm(bounds.west, bounds.east))),
-        DepthCm: Math.max(100, Math.abs(transform.depthCm(bounds.south, bounds.north))),
+        CenterWgs84: {
+          lat: +(((bounds.south + bounds.north) * 0.5).toFixed(7)),
+          lon: +(((bounds.west + bounds.east) * 0.5).toFixed(7)),
+        },
+        BoundsWgs84: {
+          south: +bounds.south.toFixed(7),
+          north: +bounds.north.toFixed(7),
+          west: +bounds.west.toFixed(7),
+          east: +bounds.east.toFixed(7),
+        },
+        FootprintCm: metrics.footprintCm,
+        WidthCm: metrics.widthCm,
+        DepthCm: metrics.depthCm,
         HeightCm: Math.max(100, heightCm),
-        X: center.X,
-        Y: center.Y,
+        YawDeg: metrics.yawDeg,
+        X: metrics.center.X,
+        Y: metrics.center.Y,
         Z: heightCm * 0.5,
       };
-    });
+    })
+    .filter(Boolean);
 }
 
 function renderAreaFeatures() {
@@ -675,6 +740,13 @@ function buildAreaPythonPayload() {
   const transform = buildCoordinateTransform(selected);
   if (!transform) return null;
   return {
+    origin_wgs84: transform.originWgs84,
+    coordinate_system: {
+      unit: "cm",
+      axes: "X=East, Y=North, Z=Up",
+      origin: "Berlin fixed WGS84 origin",
+      meters_per_degree: transform.metersPerDegree,
+    },
     splines: buildAreaPythonSplineData(),
     buildings: buildBuildingData(selected, transform),
   };
@@ -683,8 +755,13 @@ function buildAreaPythonPayload() {
 function buildCompactAreaUnrealPythonScript(payload, streetBpPath, buildingBpPath) {
   const splines = payload.splines || [];
   const buildings = payload.buildings || [];
+  const exportMeta = {
+    origin_wgs84: payload.origin_wgs84,
+    coordinate_system: payload.coordinate_system,
+  };
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
   const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
+  const metaJsonLiteral = JSON.stringify(JSON.stringify(exportMeta));
   const bpPathLiteral = JSON.stringify(streetBpPath);
   const buildingBpPathLiteral = JSON.stringify(buildingBpPath);
   return `import json
@@ -695,6 +772,7 @@ import unreal
 
 STREET_SPLINES = json.loads(${jsonLiteral})
 BUILDINGS = json.loads(${buildingJsonLiteral})
+EXPORT_META = json.loads(${metaJsonLiteral})
 STREET_BP_PATH = ${bpPathLiteral}
 BUILDING_BP_PATH = ${buildingBpPathLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
@@ -704,6 +782,8 @@ WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
 LINEAR_SPLINES = True
 CUBE_BASE_CM = 100.0
+UPDATE_EXISTING_ACTORS = True
+DELETE_BEFORE_IMPORT = False
 
 
 def fail(message):
@@ -715,6 +795,13 @@ def destroy_existing_actor_with_prefix(prefix):
     for actor in unreal.EditorLevelLibrary.get_all_level_actors():
         if actor.get_actor_label().startswith(prefix):
             unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def find_actor_by_label(label):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label() == label:
+            return actor
+    return None
 
 
 def load_bp_class(asset_path):
@@ -809,14 +896,16 @@ def set_actor_tags(actor, row):
 
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
-        actor_class,
-        unreal.Vector(0.0, 0.0, 0.0),
-        unreal.Rotator(0.0, 0.0, 0.0),
-    )
+    actor = find_actor_by_label(label) if UPDATE_EXISTING_ACTORS else None
     if actor is None:
-        fail(f"Failed to spawn actor '{label}'")
-    actor.set_actor_label(label)
+        actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+            actor_class,
+            unreal.Vector(0.0, 0.0, 0.0),
+            unreal.Rotator(0.0, 0.0, 0.0),
+        )
+        if actor is None:
+            fail(f"Failed to spawn actor '{label}'")
+        actor.set_actor_label(label)
     spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row)
     set_actor_tags(actor, row)
@@ -825,18 +914,21 @@ def create_street_spline_actor(actor_class, row):
 
 def create_building_actor(actor_class, row):
     label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('BuildingKey', row.get('Name', 'Building')))}"
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
-        actor_class,
-        unreal.Vector(
-            float(row["X"]) + WORLD_OFFSET_CM.x,
-            float(row["Y"]) + WORLD_OFFSET_CM.y,
-            float(row["Z"]) + WORLD_OFFSET_CM.z,
-        ),
-        unreal.Rotator(0.0, 0.0, 0.0),
+    location = unreal.Vector(
+        float(row["X"]) + WORLD_OFFSET_CM.x,
+        float(row["Y"]) + WORLD_OFFSET_CM.y,
+        float(row["Z"]) + WORLD_OFFSET_CM.z,
     )
+    rotation = unreal.Rotator(0.0, float(row.get("YawDeg", 0.0)), 0.0)
+    actor = find_actor_by_label(label) if UPDATE_EXISTING_ACTORS else None
     if actor is None:
-        fail(f"Failed to spawn actor '{label}'")
-    actor.set_actor_label(label)
+        actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, rotation)
+        if actor is None:
+            fail(f"Failed to spawn actor '{label}'")
+        actor.set_actor_label(label)
+    else:
+        actor.set_actor_location(location, False, False)
+        actor.set_actor_rotation(rotation, False)
     actor.set_actor_scale3d(
         unreal.Vector(
             max(0.01, float(row["WidthCm"]) / CUBE_BASE_CM),
@@ -851,6 +943,11 @@ def create_building_actor(actor_class, row):
         unreal.Name(f"WidthCm:{float(row.get('WidthCm', 0.0)):.1f}"),
         unreal.Name(f"DepthCm:{float(row.get('DepthCm', 0.0)):.1f}"),
         unreal.Name(f"HeightCm:{float(row.get('HeightCm', 0.0)):.1f}"),
+        unreal.Name(f"YawDeg:{float(row.get('YawDeg', 0.0)):.3f}"),
+        unreal.Name(f"OriginLat:{float(EXPORT_META.get('origin_wgs84', {}).get('lat', 0.0)):.7f}"),
+        unreal.Name(f"OriginLon:{float(EXPORT_META.get('origin_wgs84', {}).get('lon', 0.0)):.7f}"),
+        unreal.Name(f"CenterLat:{float(row.get('CenterWgs84', {}).get('lat', 0.0)):.7f}"),
+        unreal.Name(f"CenterLon:{float(row.get('CenterWgs84', {}).get('lon', 0.0)):.7f}"),
     ]
     return actor
 
@@ -858,8 +955,10 @@ def create_building_actor(actor_class, row):
 def main():
     actor_class = load_bp_class(STREET_BP_PATH) if STREET_SPLINES else None
     building_actor_class = load_bp_class(BUILDING_BP_PATH) if BUILDINGS else None
-    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
-    destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
+    unreal.log(f"[INFO] Area import origin WGS84: {EXPORT_META.get('origin_wgs84')}")
+    if DELETE_BEFORE_IMPORT:
+        destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+        destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
