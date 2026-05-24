@@ -22,8 +22,8 @@ const AREA_LAYER_LABELS = {
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
-const AREA_LARGE_REQUEST_KM2 = 25;
-const AREA_MAX_REQUEST_KM2 = 100;
+const AREA_LARGE_REQUEST_KM2 = 2500;
+const AREA_MAX_REQUEST_KM2 = 2500;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
 const DEFAULT_STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest";
 const STREET_BP_PATH_STORAGE_KEY = "osm-to-unreal.streetBpPath";

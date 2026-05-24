@@ -36,6 +36,8 @@ Then:
 5. Click `UE Python`.
 6. Review the generated code, then copy it into Unreal Python.
 
+The web tool allows areas up to roughly `50 x 50 km` (`2500 km²`). Very large exports can still be slow in the browser and heavy for Overpass.
+
 ## Build Check
 
 ```powershell

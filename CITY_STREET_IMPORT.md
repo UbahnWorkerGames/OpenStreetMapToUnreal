@@ -79,7 +79,7 @@ Tunnel
 6. Click `UE Python`.
 7. Review and copy the Python code from the modal.
 
-Large areas are allowed for lighter layers, but `Stadtstrasse` and `Service` should stay small because they produce many segments.
+The web tool allows areas up to roughly `50 x 50 km` (`2500 km²`). Large `Stadtstrasse` and `Service` exports can still produce many segments and take a while.
 
 ## Unreal Execution
 
