@@ -1237,7 +1237,8 @@ function buildAreaFeatures(data, bounds) {
     const category = classifyAreaWay(el.tags || {});
     if (!category) continue;
 
-    const rawGeometry = el.geometry.map((p) => [p.lat, p.lon]);
+    const rawGeometry = normalizeOverpassGeometry(el.geometry);
+    if (rawGeometry.length < 2) continue;
     const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
     for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
       const clippedGeometry = clippedParts[partIndex];
@@ -1278,6 +1279,13 @@ function areaFeatureLabel(feature) {
   const roadType = feature.tags.highway || feature.tags.railway || "";
   const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
   return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
+}
+
+function normalizeOverpassGeometry(geometry) {
+  if (!Array.isArray(geometry)) return [];
+  return geometry
+    .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lon))
+    .map((point) => [point.lat, point.lon]);
 }
 
 function renderAreaFeatures() {
