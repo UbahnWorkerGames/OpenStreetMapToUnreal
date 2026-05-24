@@ -2390,6 +2390,51 @@ main()
 `;
 }
 
+let latestAreaPythonScript = "";
+
+function downloadTextFile(filename, content, type = "text/plain") {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function showPythonCodeModal(code) {
+  latestAreaPythonScript = code;
+  const modal = document.getElementById("python-code-modal");
+  const output = document.getElementById("python-code-output");
+  if (!modal || !output) {
+    downloadTextFile("ue_import_city_street_splines_embedded.py", code, "text/x-python");
+    return;
+  }
+  output.value = code;
+  modal.hidden = false;
+  output.focus();
+  output.select();
+}
+
+function closePythonCodeModal() {
+  const modal = document.getElementById("python-code-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function copyPythonCodeFromModal() {
+  const output = document.getElementById("python-code-output");
+  const code = output?.value || latestAreaPythonScript;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    setStatus("UE-Python-Code kopiert.");
+  } catch {
+    output?.focus();
+    output?.select();
+    document.execCommand("copy");
+    setStatus("UE-Python-Code kopiert.");
+  }
+}
+
 function exportAreaUnrealPython() {
   try {
     const payload = buildAreaPythonSplineData();
@@ -2397,14 +2442,10 @@ function exportAreaUnrealPython() {
       setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
       return;
     }
-    const blob = new Blob([buildCompactAreaUnrealPythonScript(payload)], { type: "text/x-python" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "ue_import_city_street_splines_embedded.py";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const code = buildCompactAreaUnrealPythonScript(payload);
+    showPythonCodeModal(code);
     const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Export: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
+    setStatus(`UE-Python-Code: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -2954,6 +2995,16 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
 document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
+document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
+document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
+document.getElementById("btn-python-download")?.addEventListener("click", () => {
+  if (latestAreaPythonScript) {
+    downloadTextFile("ue_import_city_street_splines_embedded.py", latestAreaPythonScript, "text/x-python");
+  }
+});
+document.getElementById("python-code-modal")?.addEventListener("click", (event) => {
+  if (event.target?.id === "python-code-modal") closePythonCodeModal();
+});
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
