@@ -1828,6 +1828,10 @@ function areaTagInt(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function areaPcgRowName(key, pointIndex) {
+  return `${key}_${String(pointIndex).padStart(4, "0")}`;
+}
+
 function buildAreaPcgSplines() {
   const selected = areaFeatures.filter(
     (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
@@ -1848,24 +1852,33 @@ function buildAreaPcgSplines() {
     };
   }
 
-  const splines = [];
+  const rows = [];
   for (const feature of selected) {
     if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
     const controlPoints = feature.controlGeometry.map(toPointCm);
-    splines.push({
-      key: feature.key,
-      type: feature.category,
-      shape: feature.shape || "line",
-      street: feature.name || "",
-      osmClass: areaFeatureExportClass(feature),
-      bBridge: areaTagBool(feature.tags.bridge),
-      bTunnel: areaTagBool(feature.tags.tunnel),
-      osmLayer: areaTagInt(feature.tags.layer),
-      bClosed: Boolean(feature.closed || isClosedPolyline(feature.controlGeometry)),
-      controlPointsCm: controlPoints,
+    const pointCount = controlPoints.length;
+    const bClosed = Boolean(feature.closed || isClosedPolyline(feature.controlGeometry));
+    controlPoints.forEach((point, pointIndex) => {
+      rows.push({
+        Name: areaPcgRowName(feature.key, pointIndex),
+        SplineKey: feature.key,
+        PointIndex: pointIndex,
+        PointCount: pointCount,
+        Type: feature.category,
+        Shape: feature.shape || "line",
+        Street: feature.name || "",
+        OsmClass: areaFeatureExportClass(feature),
+        bBridge: areaTagBool(feature.tags.bridge),
+        bTunnel: areaTagBool(feature.tags.tunnel),
+        OsmLayer: areaTagInt(feature.tags.layer),
+        bClosed,
+        X: point.X,
+        Y: point.Y,
+        Z: point.Z,
+      });
     });
   }
-  return splines;
+  return rows;
 }
 
 function exportAreaPcgSplines() {
@@ -1881,7 +1894,7 @@ function exportAreaPcgSplines() {
     a.download = "ue-pcg-area-splines.json";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`PCG-Export: ${payload.length} Splines`);
+    setStatus(`PCG-Export: ${payload.length} DataTable-Zeilen`);
   } catch (error) {
     setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
   }
