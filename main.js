@@ -127,13 +127,14 @@ function getSelectedAreaCategories() {
     .map(([category]) => category);
 }
 
-function areaBoundsCacheKey(bounds) {
+function areaBoundsCacheKey(bounds, categories = getSelectedAreaCategories()) {
   if (!bounds?.isValid?.()) return "";
   return [
     bounds.getSouth().toFixed(6),
     bounds.getWest().toFixed(6),
     bounds.getNorth().toFixed(6),
     bounds.getEast().toFixed(6),
+    [...categories].sort().join("|"),
   ].join(",");
 }
 
@@ -920,17 +921,43 @@ function classifyAreaWay(tags = {}) {
   return null;
 }
 
-function buildAreaOverpassQuery(bounds) {
+function areaOverpassFilterForCategory(category) {
+  switch (category) {
+    case "motorway":
+      return 'way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"]';
+    case "major_road":
+      return 'way["highway"~"^(primary|primary_link|secondary|secondary_link)$"]';
+    case "city_road":
+      return 'way["highway"~"^(tertiary|tertiary_link|unclassified|residential|living_street|road)$"]';
+    case "service":
+      return 'way["highway"="service"]';
+    case "rail_tram":
+      return 'way["railway"="tram"]';
+    case "rail_train":
+      return 'way["railway"~"^(rail|light_rail)$"]';
+    case "rail_subway":
+      return 'way["railway"="subway"]';
+    default:
+      return null;
+  }
+}
+
+function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()) {
   const bbox = [
     bounds.getSouth().toFixed(7),
     bounds.getWest().toFixed(7),
     bounds.getNorth().toFixed(7),
     bounds.getEast().toFixed(7),
   ].join(",");
+  const clauses = categories
+    .map(areaOverpassFilterForCategory)
+    .filter(Boolean)
+    .map((filter) => `  ${filter}(${bbox});`)
+    .join("\n");
+  if (!clauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
   return `[out:json][timeout:120];
 (
-  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|road|service)$"](${bbox});
-  way["railway"~"^(tram|rail|subway|light_rail)$"](${bbox});
+${clauses}
 );
 out geom;`;
 }
@@ -1881,6 +1908,43 @@ function buildAreaPcgSplines() {
   return rows;
 }
 
+function buildAreaPythonSplineData() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+
+  const origin = selected[0].controlGeometry[0];
+  const [lat0, lon0] = origin;
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * cosLat;
+
+  function toPointCm([lat, lon]) {
+    return [
+      +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
+      +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+      0,
+    ];
+  }
+
+  return selected.map((feature) => {
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    return {
+      SplineKey: feature.key,
+      Type: feature.category,
+      Shape: feature.shape || "line",
+      Street: feature.name || "",
+      OsmClass: areaFeatureExportClass(feature),
+      bBridge: areaTagBool(feature.tags.bridge),
+      bTunnel: areaTagBool(feature.tags.tunnel),
+      OsmLayer: areaTagInt(feature.tags.layer),
+      bClosed: Boolean(feature.closed || isClosedPolyline(feature.controlGeometry)),
+      Points: feature.controlGeometry.map(toPointCm),
+    };
+  });
+}
+
 function exportAreaPcgSplines() {
   try {
     const payload = buildAreaPcgSplines();
@@ -2124,20 +2188,171 @@ main()
 `;
 }
 
+function buildCompactAreaUnrealPythonScript(splines) {
+  const jsonLiteral = JSON.stringify(JSON.stringify(splines));
+  return `import json
+import re
+
+import unreal
+
+
+STREET_SPLINES = json.loads(${jsonLiteral})
+ACTOR_LABEL_PREFIX = "CITY_STREET"
+SPLINE_COMPONENT_NAME = "StreetSpline"
+WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
+FORCE_ZERO_Z = True
+LINEAR_SPLINES = True
+
+
+def fail(message):
+    unreal.log_error(message)
+    raise RuntimeError(message)
+
+
+def destroy_existing_actor_with_prefix(prefix):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label().startswith(prefix):
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def sanitize_label_part(value):
+    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", str(value)).strip("_")
+    return sanitized or "Unnamed"
+
+
+def point_to_vector(point):
+    if not isinstance(point, list) or len(point) != 3:
+        fail(f"Invalid point: {point}")
+    x, y, z = point
+    if isinstance(x, bool) or isinstance(y, bool) or isinstance(z, bool):
+        fail(f"Invalid bool coordinate in point: {point}")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+        fail(f"Invalid numeric coordinate in point: {point}")
+    return unreal.Vector(
+        float(x) + WORLD_OFFSET_CM.x,
+        float(y) + WORLD_OFFSET_CM.y,
+        (0.0 if FORCE_ZERO_Z else float(z)) + WORLD_OFFSET_CM.z,
+    )
+
+
+def require_spline(row, index):
+    if not isinstance(row, dict):
+        fail(f"Spline {index} must be an object")
+    key = row.get("SplineKey")
+    points = row.get("Points")
+    if not isinstance(key, str) or not key:
+        fail(f"Spline {index} has no valid SplineKey")
+    if not isinstance(points, list) or len(points) < 2:
+        fail(f"Spline '{key}' needs at least 2 points")
+    return row
+
+
+def spawn_empty_actor(label):
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        unreal.Actor,
+        unreal.Vector(0.0, 0.0, 0.0),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    return actor
+
+
+def add_spline_component(actor):
+    if not hasattr(actor, "add_component_by_class"):
+        fail("Actor.add_component_by_class is not exposed in this Unreal build.")
+    component = actor.add_component_by_class(
+        unreal.SplineComponent,
+        False,
+        unreal.Transform(),
+        False,
+    )
+    if component is None:
+        fail(f"Failed to add SplineComponent to actor '{actor.get_actor_label()}'")
+    component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
+    component.rename(SPLINE_COMPONENT_NAME)
+    return component
+
+
+def set_editor_property_if_present(obj, property_name, value):
+    try:
+        obj.set_editor_property(property_name, value)
+        return True
+    except Exception:
+        return False
+
+
+def configure_spline_component(spline_component, row):
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    spline_component.clear_spline_points(False)
+    for point in row["Points"]:
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+    for index in range(len(row["Points"])):
+        point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
+        spline_component.set_spline_point_type(index, point_type, False)
+    if hasattr(spline_component, "set_closed_loop"):
+        spline_component.set_closed_loop(bool(row.get("bClosed", False)), False)
+    elif bool(row.get("bClosed", False)):
+        fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
+    spline_component.update_spline()
+
+
+def set_actor_tags(actor, row):
+    tags = [
+        "CityStreet",
+        row.get("SplineKey", ""),
+        row.get("Type", ""),
+        row.get("Shape", ""),
+        row.get("OsmClass", ""),
+        row.get("Street", ""),
+    ]
+    if row.get("bBridge"):
+        tags.append("Bridge")
+    if row.get("bTunnel"):
+        tags.append("Tunnel")
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+
+
+def create_street_spline_actor(row):
+    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
+    actor = spawn_empty_actor(label)
+    spline_component = add_spline_component(actor)
+    configure_spline_component(spline_component, row)
+    set_actor_tags(actor, row)
+    return actor
+
+
+def main():
+    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    point_count = 0
+    for index, source_row in enumerate(STREET_SPLINES):
+        row = require_spline(source_row, index)
+        point_count += len(row["Points"])
+        create_street_spline_actor(row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points")
+
+
+main()
+`;
+}
+
 function exportAreaUnrealPython() {
   try {
-    const payload = buildAreaPcgSplines();
+    const payload = buildAreaPythonSplineData();
     if (!payload) {
       setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
       return;
     }
-    const blob = new Blob([buildAreaUnrealPythonScript(payload)], { type: "text/x-python" });
+    const blob = new Blob([buildCompactAreaUnrealPythonScript(payload)], { type: "text/x-python" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "ue_import_city_street_splines_embedded.py";
     a.click();
     URL.revokeObjectURL(a.href);
-    setStatus(`UE-Python-Export: ${payload.length} Punkt-Zeilen eingebettet`);
+    const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
+    setStatus(`UE-Python-Export: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -2472,7 +2687,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
       return false;
     }
-    const cacheKey = areaBoundsCacheKey(bounds);
+    const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
     if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
       areaFeatures = areaCache.features;
       renderAreaFeatures();
@@ -2483,7 +2698,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildAreaOverpassQuery(bounds),
+      body: buildAreaOverpassQuery(bounds, selectedCategories),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
