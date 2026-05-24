@@ -7,6 +7,7 @@ The project is focused on OSM area selection, street/rail way extraction, and ge
 ## What Is Here
 
 - `Tool/` contains the browser tool.
+- `Unreal/import_osm_street_splines.py` is the reusable Unreal Python importer.
 - `CITY_STREET_IMPORT.md` documents the Unreal import workflow and safety notes.
 - `.gitignore` excludes local install/build output and generated exports.
 
@@ -34,6 +35,8 @@ Then:
 3. Click `OSM Bereich`.
 4. Click `UE Python`.
 5. Review the generated code, then copy it into Unreal Python.
+
+For a file-based workflow, click `PCG JSON`, copy the downloaded JSON next to `Unreal/import_osm_street_splines.py`, and run that script inside Unreal.
 
 ## Build Check
 

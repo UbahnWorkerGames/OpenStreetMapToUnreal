@@ -12,6 +12,8 @@ Keep source and documentation here:
 - `Tool/package.json`
 - `Tool/package-lock.json`
 - `Tool/vite.config.js`
+- `Unreal/import_osm_street_splines.py`
+- `Unreal/README.md`
 - `CITY_STREET_IMPORT.md`
 
 Do not commit local/generated runtime output:
@@ -85,6 +87,14 @@ Large areas are allowed for lighter layers, but `Stadtstrasse` and `Service` sho
 In Unreal, open the Python console or use `Tools > Execute Python Script`.
 
 For the modal workflow, paste the copied Python code into the Python console and run it.
+
+For a reusable file workflow:
+
+1. Click `PCG JSON` in the web tool.
+2. Put the downloaded `ue-pcg-area-splines.json` next to `Unreal/import_osm_street_splines.py`.
+3. Run `Unreal/import_osm_street_splines.py` with `Tools > Execute Python Script`.
+
+The file-based importer is the source-controlled version of the runtime import logic. The modal code is generated for quick copy/paste testing.
 
 ## Copy-Paste Safety Warning
 
