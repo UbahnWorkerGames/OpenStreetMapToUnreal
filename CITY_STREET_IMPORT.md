@@ -122,17 +122,17 @@ Every spawned building actor gets raw value tags in this fixed order:
 Every spawned traffic sign actor gets raw value tags in this fixed order:
 
 ```text
-[0] traffic_sign
-[1] <export sign key>
+[0] <traffic_sign or traffic_signal>
+[1] <export point key>
 [2] <OSM id>
-[3] <name, ref, or traffic_sign value>
-[4] <OSM traffic_sign value>
-[5] <OSM direction value>
+[3] <name, ref, traffic_sign value, or signal direction>
+[4] <OSM traffic_sign value or highway=traffic_signals>
+[5] <OSM direction value or traffic_signals:direction>
 [6] <X cm from Berlin origin>
 [7] <Y cm from Berlin origin>
 [8] <Z cm>
-[9] <sign latitude>
-[10] <sign longitude>
+[9] <point latitude>
+[10] <point longitude>
 ```
 
 ## Web Tool Workflow
@@ -176,6 +176,7 @@ By default, the generated script keeps existing actors. If an actor with the sam
 CITY_STREET_
 OSM_BUILDING_
 OSM_SIGN_
+OSM_SIGNAL_
 ```
 
 The generated actor labels matter because they are used to update existing imported actors:
@@ -188,9 +189,10 @@ After running the Python code, the level should contain actors named like:
 CITY_STREET_<spline_key>
 OSM_BUILDING_<building_key>
 OSM_SIGN_<sign_key>
+OSM_SIGNAL_<signal_key>
 ```
 
-Street actors should contain filled splines. Building actors should be scaled cubes with the tags listed above. Traffic sign actors are empty marker actors with raw OSM sign values and Berlin-origin coordinates in their tags.
+Street actors should contain filled splines. Building actors should be scaled cubes with the tags listed above. Traffic sign and signal actors are empty marker actors with raw OSM values and Berlin-origin coordinates in their tags.
 
 ## Failure Policy
 
