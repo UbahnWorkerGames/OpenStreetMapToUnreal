@@ -11,6 +11,8 @@ const AREA_STYLE = {
   rail_subway: { color: "#2563eb", weight: 3 },
   building: { color: "#64748b", weight: 1.2 },
   traffic_sign: { color: "#e11d48", weight: 1.2 },
+  sports_field: { color: "#22c55e", weight: 1.8 },
+  water: { color: "#0ea5e9", weight: 1.8 },
 };
 
 const AREA_LAYER_LABELS = {
@@ -23,6 +25,8 @@ const AREA_LAYER_LABELS = {
   rail_subway: "Subway",
   building: "Gebaeude",
   traffic_sign: "Verkehrsschild",
+  sports_field: "Sportplatz",
+  water: "Wasser",
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
@@ -182,6 +186,8 @@ function classifyAreaWay(tags = {}) {
   if (railway === "subway") return "rail_subway";
   if (railway === "rail" || railway === "light_rail") return "rail_train";
   if (tags.building && tags.building !== "no") return "building";
+  if (tags.leisure === "pitch" || tags.leisure === "sports_centre" || tags.sport) return "sports_field";
+  if (tags.natural === "water" || tags.water || tags.waterway === "riverbank" || tags.landuse === "reservoir") return "water";
   return null;
 }
 
@@ -205,6 +211,10 @@ function areaOverpassFilterForCategory(category) {
       return 'way["building"]';
     case "traffic_sign":
       return 'node["traffic_sign"]';
+    case "sports_field":
+      return ['way["leisure"~"^(pitch|sports_centre|stadium|track)$"]', 'way["sport"]'];
+    case "water":
+      return ['way["natural"="water"]', 'way["water"]', 'way["waterway"="riverbank"]', 'way["landuse"="reservoir"]'];
     default:
       return null;
   }
@@ -219,6 +229,7 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
   ].join(",");
   const clauses = categories
     .map(areaOverpassFilterForCategory)
+    .flat()
     .filter(Boolean)
     .map((filter) => `  ${filter}(${bbox});`)
     .join("\n");
@@ -332,6 +343,9 @@ function areaFeatureWidthM(feature) {
     case "rail_train":
     case "rail_subway":
       return 4;
+    case "sports_field":
+    case "water":
+      return 1;
     default:
       return 5;
   }
@@ -902,6 +916,15 @@ def point_to_vector(point):
     )
 
 
+def point_to_local_vector(point, origin):
+    absolute = point_to_vector(point)
+    return unreal.Vector(
+        absolute.x - origin.x,
+        absolute.y - origin.y,
+        absolute.z - origin.z,
+    )
+
+
 def require_spline(row, index):
     if not isinstance(row, dict):
         fail(f"Spline {index} must be an object")
@@ -933,12 +956,12 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
-def configure_spline_component(spline_component, row):
+def configure_spline_component(spline_component, row, actor_origin):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(point_to_local_vector(point, actor_origin), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -967,18 +990,23 @@ def set_actor_tags(actor, row):
 
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
+    actor_origin = point_to_vector(row["Points"][0])
     actor = find_actor_by_label(label) if UPDATE_EXISTING_ACTORS else None
     if actor is None:
         actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
             actor_class,
-            unreal.Vector(0.0, 0.0, 0.0),
+            actor_origin,
             unreal.Rotator(0.0, 0.0, 0.0),
         )
         if actor is None:
             fail(f"Failed to spawn actor '{label}'")
         actor.set_actor_label(label)
+    else:
+        actor.set_actor_location(actor_origin, False, False)
+        actor.set_actor_rotation(unreal.Rotator(0.0, 0.0, 0.0), False)
+    actor.set_actor_scale3d(unreal.Vector(1.0, 1.0, 1.0))
     spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row)
+    configure_spline_component(spline_component, row, actor_origin)
     set_actor_tags(actor, row)
     return actor
 

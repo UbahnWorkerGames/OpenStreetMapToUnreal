@@ -71,6 +71,16 @@ Location.Y = north offset in cm from Berlin origin
 Location.Z = 0
 ```
 
+For street, rail, sport, and water splines, the Actor transform is now also meaningful:
+
+```text
+Actor Location = first spline point in Berlin-origin cm
+Spline point [0] = local 0/0/0
+Other spline points = local offsets from the actor location
+```
+
+This keeps large Berlin coordinate values out of the SplineComponent's local point array and prevents Blueprint spline components from collapsing points onto each other when they rebuild.
+
 ## Actor Tags Written By The Importer
 
 Every spawned city street actor gets raw value tags in this fixed order:
@@ -79,7 +89,7 @@ Every spawned city street actor gets raw value tags in this fixed order:
 [0] street_spline
 [1] <export spline key>
 [2] <street name or spline key>
-[3] <area category>
+[3] <area category: road, rail, sports_field, water, ...>
 [4] <OSM highway or railway class>
 [5] <width in meters>
 [6] <OSM layer>
