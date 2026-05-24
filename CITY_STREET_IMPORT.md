@@ -1,6 +1,6 @@
 # City Street Spline Import
 
-This document describes the city street import workflow for Unreal. It is intentionally separate from the U-Bahn route import because the generated street data can become very large and should not be committed.
+This document describes the OSM city street spline import workflow for Unreal. It is intentionally separate from the legacy rail route import because the generated street data can become very large and should not be committed.
 
 ## What Belongs In This Repository
 
@@ -88,6 +88,18 @@ Large areas are allowed for lighter layers, but `Stadtstrasse` and `Service` sho
 In Unreal, open the Python console or use `Tools > Execute Python Script`.
 
 For the modal workflow, paste the copied Python code into the Python console and run it.
+
+## Copy-Paste Safety Warning
+
+The `UE Python` modal generates executable Python code. Treat it like any other script:
+
+- read the code before running it
+- make sure it targets the expected Blueprint path
+- run it only in the intended Unreal project
+- save or commit your level before running large imports
+- do not paste and execute Python code from unknown sources
+
+The generated script deletes existing actors whose labels start with `CITY_STREET_` before recreating them. That is intentional for repeatable imports, but it means actor labels matter.
 
 The script deletes existing actors whose labels start with:
 

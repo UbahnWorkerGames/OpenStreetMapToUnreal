@@ -1,6 +1,6 @@
 /**
- * Berlin U-Bahn
- * - Track: Way-Geometrie (role "") aus der Route-Relation, lückenlos zusammengesetzt
+ * OSM to Unreal
+ * - Legacy rail route: Way-Geometrie (role "") aus der Route-Relation, lückenlos zusammengesetzt
  * - Stationen: Stop-Nodes auf den Track projiziert (kein Offset mehr)
  * - Bahnsteige: Länge und Breite aus den platform-Ways der Overpass-Daten
  */

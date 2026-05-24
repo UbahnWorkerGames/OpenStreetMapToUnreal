@@ -1,16 +1,16 @@
-# UEMap Import
+# OSM to Unreal Import
 
-Use this folder to import one line into Unreal.
+Use this repository to prepare OpenStreetMap-derived route and city street spline data for Unreal.
 
 ## What is here
-- `ue_import_u8_spline_source.py` imports the route source into UE.
-- `U7.json`, `U8.json`, `U9.json` are the route source files.
-- `generated/` gets the JSON export for DataTables.
-- `Tool/` is the web editor.
+- `ue_import_u8_spline_source.py` imports the legacy rail route source into UE.
+- `U*.json` files are legacy rail route source files.
+- `generated/` contains generated route DataTable JSON.
+- `Tool/` is the web editor for route and OSM area exports.
 - `uemap-web-editor.png` is the web editor preview.
 - `uemap-station-axis.png` shows the station actor layout.
 
-## How to use
+## Legacy Rail Route Import
 1. Keep only the line you want to import in this folder.
 2. Delete the other line JSON files before running the script.
 3. Run `ue_import_u8_spline_source.py` inside Unreal Python.
@@ -25,7 +25,7 @@ Use this folder to import one line into Unreal.
 2. Run `npm install` once.
 3. Run `npm run dev` to start the editor.
 4. Use `npm run build` if you want a production bundle.
-5. The editor is the place where you edit the line before exporting it into UE.
+5. Use it for route editing and OSM area/city street exports.
 
 ## City Street Splines
 - City street spline import is documented in `CITY_STREET_IMPORT.md`.

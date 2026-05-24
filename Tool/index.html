@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Berlin U-Bahn</title>
+    <title>OSM to Unreal</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -304,10 +304,10 @@
   </head>
   <body>
     <div class="panel">
-      <h1>Berlin · U-Bahn</h1>
+      <h1>OSM to Unreal</h1>
       <div class="row">
-        <label for="line-select">Linie</label>
-        <select id="line-select" aria-label="U-Bahn-Linie"></select>
+        <label for="line-select">Route</label>
+        <select id="line-select" aria-label="Legacy rail route"></select>
       </div>
       <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-overpass" title="Aktuelle Linie direkt von Overpass laden">⇣ Overpass</button>
@@ -345,7 +345,7 @@
       <p id="direction" hidden></p>
       <p id="status"></p>
     </div>
-    <div id="map" role="application" aria-label="Karte Berlin U-Bahn"></div>
+    <div id="map" role="application" aria-label="OSM export map"></div>
 
     <div id="python-code-modal" class="code-modal" hidden>
       <div class="code-modal-panel" role="dialog" aria-modal="true" aria-labelledby="python-code-title">
