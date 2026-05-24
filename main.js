@@ -98,7 +98,9 @@ const AREA_DEDUPE_DECIMALS = 5;
 const AREA_DRAW_RAW_GEOMETRY = false;
 const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
-const AREA_MAX_REQUEST_KM2 = 5;
+const AREA_LARGE_REQUEST_KM2 = 25;
+const AREA_MAX_REQUEST_KM2 = 100;
+const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -2699,6 +2701,15 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     const areaKm2 = areaBoundsSizeKm2(bounds);
     if (areaKm2 > AREA_MAX_REQUEST_KM2) {
       setStatus(`Bereich zu gross (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
+      return false;
+    }
+    const expensiveLayers = selectedCategories.filter((category) => AREA_EXPENSIVE_LAYERS.has(category));
+    if (areaKm2 > AREA_LARGE_REQUEST_KM2 && expensiveLayers.length) {
+      const expensiveLabels = expensiveLayers.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+      setStatus(
+        `Bereich ${areaKm2.toFixed(1)} km² ist fuer ${expensiveLabels} zu gross. Diese Layer abwaehlen oder kleiner als ${AREA_LARGE_REQUEST_KM2} km² ziehen.`,
+        true,
+      );
       return false;
     }
     const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
