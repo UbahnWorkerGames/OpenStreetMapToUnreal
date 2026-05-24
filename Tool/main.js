@@ -27,6 +27,8 @@ const AREA_SIMPLIFY_TOLERANCE_M = 3;
 const AREA_LARGE_REQUEST_KM2 = 2500;
 const AREA_MAX_REQUEST_KM2 = 2500;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
+const AREA_MIN_DRAG_PIXELS = 4;
+const POSTAL_SEARCH_DEBOUNCE_MS = 800;
 const DEFAULT_STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest";
 const DEFAULT_BUILDING_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube";
 const STREET_BP_PATH_STORAGE_KEY = "osm-to-unreal.streetBpPath";
@@ -55,10 +57,13 @@ let areaSelectionBounds = null;
 let areaSelectionRect = null;
 let areaSelectMode = false;
 let areaDragStart = null;
+let areaDragStartPoint = null;
 let areaDraftRect = null;
 let areaFeatures = [];
 let areaCache = null;
 let latestAreaPythonScript = "";
+let postalSearchTimer = null;
+let lastPostalSearchValue = "";
 
 function getStoredStreetBpPath() {
   const stored = window.localStorage.getItem(STREET_BP_PATH_STORAGE_KEY);
@@ -442,6 +447,36 @@ function renderAreaFeatures() {
   setStatus(`Bereich geladen: ${visibleCount}/${areaFeatures.length} Splines sichtbar${summary ? ` · ${summary}` : ""}`);
 }
 
+function setSelectedAreaBounds(bounds, shouldFitMap = false) {
+  if (!bounds?.isValid?.()) return false;
+  areaSelectionBounds = bounds;
+  if (areaSelectionRect) areaSelectionRect.remove();
+  areaSelectionRect = L.rectangle(bounds, {
+    color: "#16a34a",
+    weight: 2,
+    fillOpacity: 0.04,
+  }).addTo(map);
+  if (shouldFitMap) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
+  const areaKm2 = areaBoundsSizeKm2(bounds);
+  const suffix = areaKm2 > AREA_MAX_REQUEST_KM2
+    ? ` Zu gross fuer Overpass, bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² waehlen.`
+    : "";
+  setStatus(`Bereich gewaehlt (${areaKm2.toFixed(2)} km²).${suffix}`, areaKm2 > AREA_MAX_REQUEST_KM2);
+  return true;
+}
+
+function clearAreaDraft() {
+  document.removeEventListener("pointermove", updateAreaSelection);
+  document.removeEventListener("pointerup", finishAreaSelection);
+  document.removeEventListener("pointercancel", cancelAreaSelection);
+  areaDragStart = null;
+  areaDragStartPoint = null;
+  if (areaDraftRect) {
+    areaDraftRect.remove();
+    areaDraftRect = null;
+  }
+}
+
 function setAreaSelectMode(active) {
   areaSelectMode = active;
   document.getElementById("btn-area-select")?.classList.toggle("active", active);
@@ -450,48 +485,53 @@ function setAreaSelectMode(active) {
     map.dragging.disable();
     map.doubleClickZoom.disable();
   } else {
+    clearAreaDraft();
     map.dragging.enable();
     map.doubleClickZoom.enable();
   }
 }
 
 function beginAreaSelection(event) {
-  if (!areaSelectMode) return;
-  event.originalEvent?.preventDefault?.();
-  areaDragStart = event.latlng;
+  if (!areaSelectMode || event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  areaDragStart = map.mouseEventToLatLng(event);
+  areaDragStartPoint = map.mouseEventToContainerPoint(event);
   if (areaDraftRect) areaDraftRect.remove();
   areaDraftRect = L.rectangle([areaDragStart, areaDragStart], {
     color: "#16a34a",
     weight: 1,
     dashArray: "4 4",
   }).addTo(map);
+  document.addEventListener("pointermove", updateAreaSelection, { passive: false });
+  document.addEventListener("pointerup", finishAreaSelection, { passive: false });
+  document.addEventListener("pointercancel", cancelAreaSelection, { passive: false });
 }
 
 function updateAreaSelection(event) {
   if (!areaSelectMode || !areaDragStart || !areaDraftRect) return;
-  event.originalEvent?.preventDefault?.();
-  areaDraftRect.setBounds(L.latLngBounds(areaDragStart, event.latlng));
+  event.preventDefault();
+  areaDraftRect.setBounds(L.latLngBounds(areaDragStart, map.mouseEventToLatLng(event)));
 }
 
 function finishAreaSelection(event) {
   if (!areaSelectMode || !areaDragStart) return;
-  event.originalEvent?.preventDefault?.();
-  const bounds = L.latLngBounds(areaDragStart, event.latlng);
-  areaDragStart = null;
-  if (areaDraftRect) {
-    areaDraftRect.remove();
-    areaDraftRect = null;
+  event.preventDefault();
+  const currentLatLng = map.mouseEventToLatLng(event);
+  const currentPoint = map.mouseEventToContainerPoint(event);
+  const dragDistance = areaDragStartPoint ? areaDragStartPoint.distanceTo(currentPoint) : 0;
+  const bounds = L.latLngBounds(areaDragStart, currentLatLng);
+  clearAreaDraft();
+  if (dragDistance < AREA_MIN_DRAG_PIXELS || !bounds.isValid()) {
+    setStatus("Bereich ziehen, nicht nur klicken.", true);
+    return;
   }
-  if (!bounds.isValid()) return;
-  areaSelectionBounds = bounds;
-  if (areaSelectionRect) areaSelectionRect.remove();
-  areaSelectionRect = L.rectangle(bounds, {
-    color: "#16a34a",
-    weight: 2,
-    fillOpacity: 0.04,
-  }).addTo(map);
+  setSelectedAreaBounds(bounds);
   setAreaSelectMode(false);
-  setStatus(`Bereich gewaehlt (${areaBoundsSizeKm2(bounds).toFixed(2)} km²).`);
+}
+
+function cancelAreaSelection() {
+  clearAreaDraft();
 }
 
 async function importAreaFromOverpass(bounds = areaSelectionBounds) {
@@ -895,12 +935,20 @@ function boundsFromNominatimResult(result) {
   return L.latLngBounds([south, west], [north, east]);
 }
 
-async function selectPostalCodeArea() {
+async function selectPostalCodeArea({ isAutomatic = false } = {}) {
+  if (!isAutomatic && postalSearchTimer) {
+    clearTimeout(postalSearchTimer);
+    postalSearchTimer = null;
+  }
   const value = document.getElementById("postal-code-input")?.value?.trim();
   if (!value) {
+    if (isAutomatic) return;
     setStatus("PLZ oder Ort eingeben.", true);
     return;
   }
+  if (isAutomatic && value.length < 3) return;
+  if (isAutomatic && value === lastPostalSearchValue) return;
+  lastPostalSearchValue = value;
   try {
     setStatus(`Suche ${value} ...`);
     const url = new URL(NOMINATIM_API_URL);
@@ -910,25 +958,36 @@ async function selectPostalCodeArea() {
     const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
     const results = await response.json();
+    if (isAutomatic && document.getElementById("postal-code-input")?.value?.trim() !== value) return;
     const bounds = boundsFromNominatimResult(results?.[0]);
-    if (!bounds) throw new Error("Kein gueltiges Suchergebnis");
-    areaSelectionBounds = bounds;
-    if (areaSelectionRect) areaSelectionRect.remove();
-    areaSelectionRect = L.rectangle(bounds, { color: "#16a34a", weight: 2, fillOpacity: 0.04 }).addTo(map);
-    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
-    setStatus(`Bereich gewaehlt (${areaBoundsSizeKm2(bounds).toFixed(2)} km²).`);
+    if (!bounds) throw new Error("Kein Treffer mit gueltigem Bereich");
+    setSelectedAreaBounds(bounds, true);
   } catch (error) {
     setStatus(`Ortssuche fehlgeschlagen: ${error.message}`, true);
   }
 }
 
+function schedulePostalCodeAreaSearch() {
+  if (postalSearchTimer) clearTimeout(postalSearchTimer);
+  const value = document.getElementById("postal-code-input")?.value?.trim() || "";
+  if (value.length < 3) return;
+  postalSearchTimer = window.setTimeout(() => {
+    postalSearchTimer = null;
+    selectPostalCodeArea({ isAutomatic: true });
+  }, POSTAL_SEARCH_DEBOUNCE_MS);
+}
+
 document.getElementById("btn-area-select")?.addEventListener("click", () => setAreaSelectMode(!areaSelectMode));
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
-document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
+document.getElementById("btn-postal-code")?.addEventListener("click", () => selectPostalCodeArea());
 document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") selectPostalCodeArea();
+  if (event.key === "Enter") {
+    event.preventDefault();
+    selectPostalCodeArea();
+  }
 });
+document.getElementById("postal-code-input")?.addEventListener("input", schedulePostalCodeAreaSearch);
 document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
 document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
 document.getElementById("btn-python-download")?.addEventListener("click", () => {
@@ -951,8 +1010,6 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
 initStreetBpPathInput();
 initBuildingBpPathInput();
 
-map.on("mousedown", beginAreaSelection);
-map.on("mousemove", updateAreaSelection);
-map.on("mouseup", finishAreaSelection);
+map.getContainer().addEventListener("pointerdown", beginAreaSelection);
 
 setStatus("Bereich ziehen oder Ort suchen, dann Overpass laden.");
