@@ -1900,6 +1900,249 @@ function exportAreaPcgSplines() {
   }
 }
 
+function buildAreaUnrealPythonScript(rows) {
+  const jsonText = JSON.stringify(rows, null, 2);
+  const jsonLiteral = JSON.stringify(jsonText);
+  return `import json
+import re
+
+import unreal
+
+
+STREET_ROWS = json.loads(${jsonLiteral})
+ACTOR_LABEL_PREFIX = "CITY_STREET"
+SPLINE_COMPONENT_NAME = "StreetSpline"
+WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
+FORCE_ZERO_Z = True
+LINEAR_SPLINES = True
+
+
+def log(level, message):
+    unreal.log(f"[{level}] {message}")
+
+
+def fail(message):
+    unreal.log_error(message)
+    raise RuntimeError(message)
+
+
+def destroy_existing_actor_with_prefix(prefix):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label().startswith(prefix):
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def require_key(row, key, row_index):
+    if key not in row:
+        fail(f"Row {row_index} is missing required key '{key}': {row}")
+    return row[key]
+
+
+def require_string(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if not isinstance(value, str) or not value:
+        fail(f"Row {row_index} key '{key}' must be a non-empty string")
+    return value
+
+
+def require_int(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if isinstance(value, bool) or not isinstance(value, int):
+        fail(f"Row {row_index} key '{key}' must be an integer")
+    return value
+
+
+def require_bool(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if not isinstance(value, bool):
+        fail(f"Row {row_index} key '{key}' must be a bool")
+    return value
+
+
+def require_number(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        fail(f"Row {row_index} key '{key}' must be numeric")
+    return float(value)
+
+
+def validate_row(row, row_index):
+    if not isinstance(row, dict):
+        fail(f"Row {row_index} must be a JSON object")
+
+    return {
+        "Name": require_string(row, "Name", row_index),
+        "SplineKey": require_string(row, "SplineKey", row_index),
+        "PointIndex": require_int(row, "PointIndex", row_index),
+        "PointCount": require_int(row, "PointCount", row_index),
+        "Type": require_string(row, "Type", row_index),
+        "Shape": require_string(row, "Shape", row_index),
+        "Street": str(row.get("Street", "")),
+        "OsmClass": str(row.get("OsmClass", "")),
+        "bBridge": require_bool(row, "bBridge", row_index),
+        "bTunnel": require_bool(row, "bTunnel", row_index),
+        "OsmLayer": require_int(row, "OsmLayer", row_index),
+        "bClosed": require_bool(row, "bClosed", row_index),
+        "X": require_number(row, "X", row_index),
+        "Y": require_number(row, "Y", row_index),
+        "Z": require_number(row, "Z", row_index),
+    }
+
+
+def group_rows(rows):
+    groups = {}
+    for row_index, row in enumerate(rows):
+        validated = validate_row(row, row_index)
+        groups.setdefault(validated["SplineKey"], []).append(validated)
+    if not groups:
+        fail("No street spline rows found")
+    return groups
+
+
+def validate_group(spline_key, rows):
+    point_counts = {row["PointCount"] for row in rows}
+    if len(point_counts) != 1:
+        fail(f"Spline '{spline_key}' has inconsistent PointCount values: {sorted(point_counts)}")
+
+    point_count = point_counts.pop()
+    if point_count != len(rows):
+        fail(f"Spline '{spline_key}' declares PointCount={point_count}, but has {len(rows)} rows")
+    if point_count < 2:
+        fail(f"Spline '{spline_key}' needs at least 2 points")
+
+    sorted_rows = sorted(rows, key=lambda row: row["PointIndex"])
+    actual_indices = [row["PointIndex"] for row in sorted_rows]
+    expected_indices = list(range(point_count))
+    if actual_indices != expected_indices:
+        fail(f"Spline '{spline_key}' has invalid PointIndex sequence: {actual_indices}")
+    return sorted_rows
+
+
+def sanitize_label_part(value):
+    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")
+    return sanitized or "Unnamed"
+
+
+def point_to_vector(row):
+    return unreal.Vector(
+        row["X"] + WORLD_OFFSET_CM.x,
+        row["Y"] + WORLD_OFFSET_CM.y,
+        (0.0 if FORCE_ZERO_Z else row["Z"]) + WORLD_OFFSET_CM.z,
+    )
+
+
+def spawn_empty_actor(label):
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        unreal.Actor,
+        unreal.Vector(0.0, 0.0, 0.0),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    return actor
+
+
+def add_spline_component(actor):
+    if not hasattr(actor, "add_component_by_class"):
+        fail("Actor.add_component_by_class is not exposed. Use the file import script with a BP actor fallback.")
+
+    component = actor.add_component_by_class(
+        unreal.SplineComponent,
+        False,
+        unreal.Transform(),
+        False,
+    )
+    if component is None:
+        fail(f"Failed to add SplineComponent to actor '{actor.get_actor_label()}'")
+    component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
+    component.rename(SPLINE_COMPONENT_NAME)
+    return component
+
+
+def set_editor_property_if_present(obj, property_name, value):
+    try:
+        obj.set_editor_property(property_name, value)
+        return True
+    except Exception:
+        return False
+
+
+def configure_spline_component(spline_component, rows):
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    spline_component.clear_spline_points(False)
+
+    for row in rows:
+        spline_component.add_spline_point(point_to_vector(row), unreal.SplineCoordinateSpace.LOCAL, False)
+
+    for index in range(len(rows)):
+        point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
+        spline_component.set_spline_point_type(index, point_type, False)
+
+    if hasattr(spline_component, "set_closed_loop"):
+        spline_component.set_closed_loop(bool(rows[0]["bClosed"]), False)
+    elif bool(rows[0]["bClosed"]):
+        fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
+
+    spline_component.update_spline()
+
+
+def set_actor_tags(actor, rows):
+    first = rows[0]
+    tags = ["CityStreet", first["SplineKey"], first["Type"], first["Shape"], first["OsmClass"]]
+    if first["Street"]:
+        tags.append(first["Street"])
+    if first["bBridge"]:
+        tags.append("Bridge")
+    if first["bTunnel"]:
+        tags.append("Tunnel")
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+
+
+def create_street_spline_actor(spline_key, rows):
+    sorted_rows = validate_group(spline_key, rows)
+    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(spline_key)}"
+    actor = spawn_empty_actor(label)
+    spline_component = add_spline_component(actor)
+    configure_spline_component(spline_component, sorted_rows)
+    set_actor_tags(actor, sorted_rows)
+    return actor
+
+
+def main():
+    groups = group_rows(STREET_ROWS)
+    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    created = 0
+    for spline_key, rows in groups.items():
+        create_street_spline_actor(spline_key, rows)
+        created += 1
+    log("INFO", f"Imported {created} city street splines from {len(STREET_ROWS)} point rows")
+
+
+main()
+`;
+}
+
+function exportAreaUnrealPython() {
+  try {
+    const payload = buildAreaPcgSplines();
+    if (!payload) {
+      setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
+      return;
+    }
+    const blob = new Blob([buildAreaUnrealPythonScript(payload)], { type: "text/x-python" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ue_import_city_street_splines_embedded.py";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`UE-Python-Export: ${payload.length} Punkt-Zeilen eingebettet`);
+  } catch (error) {
+    setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 function applyEditsFromParsed(parsed) {
   // v4: Master + eingebetteter UE-Importblock
   if (parsed?.v === 4) {
@@ -2428,6 +2671,7 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
 document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
+document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
