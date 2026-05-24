@@ -1,0 +1,10 @@
+Tool/node_modules/
+Tool/dist/
+
+ue_import_city_street_splines_embedded.py
+ue-pcg-area-splines.json
+*.log
+
+Saved/
+Intermediate/
+DerivedDataCache/

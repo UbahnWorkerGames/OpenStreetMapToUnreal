@@ -5,8 +5,6 @@
  * - Bahnsteige: Länge und Breite aus den platform-Ways der Overpass-Daten
  */
 
-import JSZip from "jszip";
-
 const LINES = ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "U9"];
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
@@ -35,13 +33,14 @@ L.control.scale({ metric: true, imperial: false }).addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 const editLayer = L.layerGroup().addTo(map);
 const splineLayer = L.layerGroup().addTo(map);
+const areaSelectionLayer = L.layerGroup().addTo(map);
+const areaRawLayer = L.layerGroup().addTo(map);
+const areaProcessedLayer = L.layerGroup().addTo(map);
 let uploadedJsonData = null;
 
-const DEFAULT_HALF_LENGTH_M = 60; // 120m Fallback wenn kein platform-Way vorhanden (halbe Länge)
+const DEFAULT_HALF_LENGTH_M = 65; // 130m Fallback wenn kein platform-Way vorhanden
 const DEFAULT_HALF_WIDTH_M = 2.7; // 5.4m Fallback
-// Blend zurück auf Originalgleis: min (fast gerade) bis max (starke Kurve).
-const TRACK_BLEND_M_MIN = 10;
-const TRACK_BLEND_M_MAX = 60;
+const TRACK_BLEND_M = 30; // Hermite-Blend-Distanz am Bahnsteig-Ein-/Austritt
 
 // masterStations: einzige Quelle der Wahrheit für Stationsdaten
 // { name, lat, lon, halfLengthM, halfWidthM, _osmLat?, _osmLon?, _osmHalfLengthM?, _osmHalfWidthM? }
@@ -59,7 +58,9 @@ let currentSourceKind = null; // "overpass" | "master"
 
 const SPLINE_SPACING_M = 50; // Abstand der initialen Spline-Kontrollpunkte
 const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
+const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
+const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 let persistCacheTimer = null;
 
@@ -80,6 +81,73 @@ const PLATFORM_STYLE = {
   lineCap: "round",
   lineJoin: "round",
 };
+
+const AREA_STYLE = {
+  motorway: { color: "#dc2626", weight: 4 },
+  major_road: { color: "#f59e0b", weight: 3.5 },
+  city_road: { color: "#475569", weight: 2.5 },
+  service: { color: "#94a3b8", weight: 2 },
+  rail_tram: { color: "#16a34a", weight: 3 },
+  rail_train: { color: "#7c3aed", weight: 3 },
+  rail_subway: { color: "#2563eb", weight: 3 },
+};
+
+const AREA_SIMPLIFY_TOLERANCE_M = 3;
+const AREA_SEGMENT_SPACING_M = 10;
+const AREA_DEDUPE_DECIMALS = 5;
+const AREA_DRAW_RAW_GEOMETRY = false;
+const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
+const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
+const AREA_LARGE_REQUEST_KM2 = 25;
+const AREA_MAX_REQUEST_KM2 = 100;
+const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
+
+const AREA_LAYER_LABELS = {
+  motorway: "Autobahn",
+  major_road: "Hauptstrasse",
+  city_road: "Stadtstrasse",
+  service: "Service",
+  rail_tram: "Tram",
+  rail_train: "Zug",
+  rail_subway: "U-Bahn",
+};
+
+const areaLayerVisibility = new Map(
+  Object.keys(AREA_LAYER_LABELS).map((key) => [key, key === "rail_subway"]),
+);
+
+let areaSelectionBounds = null;
+let areaSelectionRect = null;
+let areaSelectMode = false;
+let areaDragStart = null;
+let areaDraftRect = null;
+let areaFeatures = [];
+let areaCache = null;
+
+function getSelectedAreaCategories() {
+  return [...areaLayerVisibility.entries()]
+    .filter(([, visible]) => visible)
+    .map(([category]) => category);
+}
+
+function areaBoundsCacheKey(bounds, categories = getSelectedAreaCategories()) {
+  if (!bounds?.isValid?.()) return "";
+  return [
+    bounds.getSouth().toFixed(6),
+    bounds.getWest().toFixed(6),
+    bounds.getNorth().toFixed(6),
+    bounds.getEast().toFixed(6),
+    [...categories].sort().join("|"),
+  ].join(",");
+}
+
+function areaBoundsSizeKm2(bounds) {
+  if (!bounds?.isValid?.()) return 0;
+  const southWest = [bounds.getSouth(), bounds.getWest()];
+  const southEast = [bounds.getSouth(), bounds.getEast()];
+  const northWest = [bounds.getNorth(), bounds.getWest()];
+  return (haversineM(southWest, southEast) * haversineM(southWest, northWest)) / 1_000_000;
+}
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
 
@@ -125,6 +193,10 @@ function moveMeter(point, tangent, distM) {
 }
 
 /** Kumulierte Länge (m) entlang einer Polylinie. */
+function pointKey(point) {
+  return `${point[0].toFixed(7)},${point[1].toFixed(7)}`;
+}
+
 function cumLengths(poly) {
   const c = [0];
   for (let i = 1; i < poly.length; i++)
@@ -595,68 +667,6 @@ function extractSection(track, cum, fromDist, toDist) {
  * - Geschwungene Abschnitte zwischen den Stationen (originale Way-Punkte)
  * - An jeder Station: gerade Bahnsteigfläche aus der OSM-Plattform-Geometrie
  */
-/**
- * Winkel zwischen zwei Tangenten-Vektoren in Grad.
- * Gibt 0 zurück wenn einer der Vektoren null ist.
- */
-function tangentAngleDeg(t0, t1) {
-  if (!t0 || !t1) return 0;
-  const dot = Math.max(-1, Math.min(1, t0.dx * t1.dx + t0.dy * t1.dy));
-  return Math.acos(dot) * (180 / Math.PI);
-}
-
-/**
- * Adaptiver Blend-Abstand:
- *   kleiner Winkel (fast gerade) → kurzer Blend (TRACK_BLEND_M_MIN)
- *   großer Winkel (starke Kurve) → langer Blend (TRACK_BLEND_M_MAX)
- */
-function adaptiveBlendM(angleDeg) {
-  const t = Math.max(0, Math.min(1, (angleDeg - 3) / (25 - 3)));
-  return TRACK_BLEND_M_MIN + t * (TRACK_BLEND_M_MAX - TRACK_BLEND_M_MIN);
-}
-
-/**
- * Gesamte Winkelabweichung (rad) auf einem Track-Abschnitt – misst Kurvigkeit.
- * Niedrigerer Wert = gerader Abschnitt.
- */
-function angularDeviation(track, cum, fromDist, toDist, stepM = 3) {
-  fromDist = Math.max(0, fromDist);
-  toDist   = Math.min(cum[cum.length - 1], toDist);
-  let total = 0, prev = null;
-  for (let d = fromDist; ; d = Math.min(d + stepM, toDist)) {
-    const t = tangentAtDist(track, cum, d);
-    if (prev && t) {
-      const dot = Math.max(-1, Math.min(1, prev.dx * t.dx + prev.dy * t.dy));
-      total += Math.acos(dot);
-    }
-    prev = t;
-    if (d >= toDist) break;
-  }
-  return total;
-}
-
-/**
- * Sucht innerhalb von ±searchRadius um distAlongTrack die Position,
- * bei der ein Fenster der Breite halfLengthM*2 am geradsten ist.
- * Gibt die optimale distAlongTrack zurück.
- */
-function findStraightestCenter(track, cum, distAlongTrack, halfLengthM) {
-  const totalLen    = cum[cum.length - 1];
-  const searchRadiusM = halfLengthM;        // Suchfenster ± halfLength
-  const stepM       = 2;
-  const lo = Math.max(halfLengthM,              distAlongTrack - searchRadiusM);
-  const hi = Math.min(totalLen - halfLengthM,   distAlongTrack + searchRadiusM);
-  if (lo >= hi) return Math.max(halfLengthM, Math.min(totalLen - halfLengthM, distAlongTrack));
-  let bestDev  = Infinity;
-  let bestDist = distAlongTrack;
-  for (let d = lo; ; d = Math.min(d + stepM, hi)) {
-    const dev = angularDeviation(track, cum, d - halfLengthM, d + halfLengthM);
-    if (dev < bestDev) { bestDev = dev; bestDist = d; }
-    if (d >= hi) break;
-  }
-  return bestDist;
-}
-
 function buildFinalTrack(rawTrack, stationProjections) {
   const cum = cumLengths(rawTrack);
   const totalLen = cum[cum.length - 1];
@@ -678,53 +688,42 @@ function buildFinalTrack(rawTrack, stationProjections) {
   };
 
   for (const station of sorted) {
-    const { halfLengthM, halfWidthM, distAlongTrack } = station;
-
-    // Station-Position und Tangente direkt von der Mittellinie interpolieren.
-    const point   = pointAtDist(rawTrack, cum, distAlongTrack);
-    const tangent = tangentAtDist(rawTrack, cum, distAlongTrack);
+    const { halfLengthM, halfWidthM, distAlongTrack, point, tangent } = station;
     if (!tangent) continue;
 
-    // Gerade Section = exakt Bahnsteiglänge
     const segStart = Math.max(cursor, distAlongTrack - halfLengthM);
-    const segEnd   = Math.min(totalLen, distAlongTrack + halfLengthM);
+    const segEnd = Math.min(totalLen, distAlongTrack + halfLengthM);
+    // Blend-Zonen: TRACK_BLEND_M vor und nach dem geraden Bahnsteig-Abschnitt
+    const blendEntry = Math.max(cursor, segStart - TRACK_BLEND_M);
+    const blendExit = Math.min(totalLen, segEnd + TRACK_BLEND_M);
 
-    // Endpunkte der geraden Section
-    const beforePt = moveMeter(point, tangent, segStart - distAlongTrack);
-    const afterPt  = moveMeter(point, tangent, segEnd   - distAlongTrack);
-
-    // Adaptiver Blend: Winkel zwischen natürlicher Gleis-Tangente und Bahnsteig-Tangente
-    const rawT_entry  = tangentAtDist(rawTrack, cum, Math.max(0,        segStart));
-    const rawT_exit   = tangentAtDist(rawTrack, cum, Math.min(totalLen, segEnd));
-    const entryBlendM = adaptiveBlendM(tangentAngleDeg(rawT_entry, tangent));
-    const exitBlendM  = adaptiveBlendM(tangentAngleDeg(rawT_exit,  tangent));
-
-    const blendEntry = Math.max(cursor,    segStart - entryBlendM);
-    const blendExit  = Math.min(totalLen,  segEnd   + exitBlendM);
-
-    // 1. Geschwungener Track bis Einfahrt-Blend-Beginn
+    // 1. Geschwungener Track bis zum Beginn der Einfahrt-Blend-Zone
     if (blendEntry > cursor) {
       append(extractSection(rawTrack, cum, cursor, blendEntry));
     }
 
+    // Bahnsteig-Endpunkte (entlang der lokalen Tangente)
+    const beforePt = moveMeter(point, tangent, segStart - distAlongTrack);
+    const afterPt = moveMeter(point, tangent, segEnd - distAlongTrack);
+
     // 2. Hermite-Einfahrt: natürliche Gleistangente → Bahnsteig-Tangente
-    const entryP0   = pointAtDist(rawTrack, cum, blendEntry);
-    const entryT0   = tangentAtDist(rawTrack, cum, blendEntry);
+    const entryP0 = pointAtDist(rawTrack, cum, blendEntry);
+    const entryT0 = tangentAtDist(rawTrack, cum, blendEntry);
     const entryDist = haversineM(entryP0, beforePt);
     append(hermiteSegment(entryP0, entryT0, beforePt, tangent, entryDist));
 
-    // 3. Gerade Section: Puffer + Bahnsteig + Puffer
-    append([beforePt, afterPt]);
+    // 3. Gerader Bahnsteig-Abschnitt
+    append([point, afterPt]);
 
     // 4. Hermite-Ausfahrt: Bahnsteig-Tangente → natürliche Gleistangente
-    const exitP1   = pointAtDist(rawTrack, cum, blendExit);
-    const exitT1   = tangentAtDist(rawTrack, cum, blendExit);
+    const exitP1 = pointAtDist(rawTrack, cum, blendExit);
+    const exitT1 = tangentAtDist(rawTrack, cum, blendExit);
     const exitDist = haversineM(afterPt, exitP1);
     append(hermiteSegment(afterPt, tangent, exitP1, exitT1, exitDist));
 
-    // Bahnsteig-Polygon (nur reale Bahnsteiglänge, kein Puffer)
+    // Bahnsteig-Polygon
     platformSegments.push(
-      buildPlatformPolygon(point, tangent, -halfLengthM, halfLengthM, halfWidthM),
+      buildPlatformPolygon(point, tangent, segStart - distAlongTrack, segEnd - distAlongTrack, halfWidthM),
     );
 
     cursor = blendExit;
@@ -880,88 +879,522 @@ function loadCachedMasterForRef(ref) {
   if (!ref) return false;
   const cached = _storageGet(`${MASTER_CACHE_KEY_PREFIX}${ref}`);
   const payload = cached?.payload;
-  if (
-    !payload ||
-    payload.v !== 4 ||
-    !Array.isArray(payload.controlPoints) ||
-    payload.controlPoints.length < 2 ||
-    !Array.isArray(payload.masterStations) ||
-    payload.masterStations.length === 0
-  ) {
+  if (!payload || payload.v !== 4 || !Array.isArray(payload.controlPoints) || !Array.isArray(payload.masterStations)) {
     return false;
   }
   applyEditsFromParsed(payload);
   return true;
 }
 
-function tryLoadRouteFromCache(ref) {
-  if (loadCachedMasterForRef(ref)) {
-    setStatus(`Linie ${ref} aus Cache geladen.`);
-    return true;
-  }
-
-  if (uploadedJsonData && lastLoadData?.ref === ref) {
-    loadFromUploadedData(uploadedJsonData, ref);
-    return true;
-  }
-
-  const cachedOverpass = loadCachedOverpassDataset();
-  if (cachedOverpass) {
-    uploadedJsonData = cachedOverpass;
-    loadFromUploadedData(uploadedJsonData, ref);
-    setStatus(`Linie ${ref} aus Cache geladen.`);
-    return true;
-  }
-
-  return false;
-}
-
 function clearRoute() {
   routeLayer.clearLayers();
-  const panel = document.getElementById("station-panel");
-  if (panel) panel.hidden = true;
 }
 
-// ─── Stationsliste rechts ─────────────────────────────────────────────────────
+function normalizeAreaKey(sourceValue) {
+  let normalized = String(sourceValue || "").trim();
+  const replacements = new Map([
+    ["\u00c4", "Ae"], ["\u00d6", "Oe"], ["\u00dc", "Ue"],
+    ["\u00e4", "ae"], ["\u00f6", "oe"], ["\u00fc", "ue"], ["\u00df", "ss"],
+    ["Ã„", "Ae"], ["Ã–", "Oe"], ["Ãœ", "Ue"],
+    ["Ã¤", "ae"], ["Ã¶", "oe"], ["Ã¼", "ue"], ["ÃŸ", "ss"],
+  ]);
+  for (const [from, to] of replacements) normalized = normalized.split(from).join(to);
 
-function updateStationPanel(stations, ref) {
-  const panel   = document.getElementById("station-panel");
-  const header  = document.getElementById("station-panel-header");
-  const list    = document.getElementById("station-list");
-  if (!panel || !header || !list) return;
+  let result = "";
+  let lastWasUnderscore = false;
+  for (const ch of normalized) {
+    if (/^[A-Za-z0-9]$/.test(ch)) {
+      result += ch;
+      lastWasUnderscore = false;
+    } else if (!lastWasUnderscore) {
+      result += "_";
+      lastWasUnderscore = true;
+    }
+  }
+  return result.replace(/^_+|_+$/g, "");
+}
 
-  if (!stations || stations.length === 0) {
-    panel.hidden = true;
-    return;
+function classifyAreaWay(tags = {}) {
+  const highway = tags.highway;
+  if (highway) {
+    if (["motorway", "motorway_link", "trunk", "trunk_link"].includes(highway)) return "motorway";
+    if (["primary", "primary_link", "secondary", "secondary_link"].includes(highway)) return "major_road";
+    if (["tertiary", "tertiary_link", "unclassified", "residential", "living_street", "road"].includes(highway)) {
+      return "city_road";
+    }
+    if (highway === "service") return "service";
   }
 
-  header.textContent = `${ref} · ${stations.length} Stationen`;
-  list.innerHTML = "";
+  const railway = tags.railway;
+  if (railway === "tram") return "rail_tram";
+  if (railway === "subway") return "rail_subway";
+  if (railway === "rail" || railway === "light_rail") return "rail_train";
+  return null;
+}
 
-  stations.forEach((s, i) => {
-    const item = document.createElement("div");
-    item.className = "stn-item";
-    item.title = s.name;
+function areaOverpassFilterForCategory(category) {
+  switch (category) {
+    case "motorway":
+      return 'way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"]';
+    case "major_road":
+      return 'way["highway"~"^(primary|primary_link|secondary|secondary_link)$"]';
+    case "city_road":
+      return 'way["highway"~"^(tertiary|tertiary_link|unclassified|residential|living_street|road)$"]';
+    case "service":
+      return 'way["highway"="service"]';
+    case "rail_tram":
+      return 'way["railway"="tram"]';
+    case "rail_train":
+      return 'way["railway"~"^(rail|light_rail)$"]';
+    case "rail_subway":
+      return 'way["railway"="subway"]';
+    default:
+      return null;
+  }
+}
 
-    const num  = document.createElement("span");
-    num.className = "stn-num";
-    num.textContent = i + 1;
+function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()) {
+  const bbox = [
+    bounds.getSouth().toFixed(7),
+    bounds.getWest().toFixed(7),
+    bounds.getNorth().toFixed(7),
+    bounds.getEast().toFixed(7),
+  ].join(",");
+  const clauses = categories
+    .map(areaOverpassFilterForCategory)
+    .filter(Boolean)
+    .map((filter) => `  ${filter}(${bbox});`)
+    .join("\n");
+  if (!clauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
+  return `[out:json][timeout:120];
+(
+${clauses}
+);
+out geom(${bbox});`;
+}
 
-    const dot  = document.createElement("span");
-    dot.className = "stn-dot";
+function outCode(lat, lon, bounds) {
+  let code = 0;
+  if (lon < bounds.getWest()) code |= 1;
+  else if (lon > bounds.getEast()) code |= 2;
+  if (lat < bounds.getSouth()) code |= 4;
+  else if (lat > bounds.getNorth()) code |= 8;
+  return code;
+}
 
-    const name = document.createElement("span");
-    name.className = "stn-name";
-    name.textContent = s.name;
+function clipSegmentToBounds(a, b, bounds) {
+  let lat0 = a[0];
+  let lon0 = a[1];
+  let lat1 = b[0];
+  let lon1 = b[1];
+  let code0 = outCode(lat0, lon0, bounds);
+  let code1 = outCode(lat1, lon1, bounds);
 
-    item.append(num, dot, name);
-    item.addEventListener("click", () => {
-      map.flyTo([s.lat, s.lon], 17, { duration: 0.8 });
-    });
-    list.appendChild(item);
-  });
+  while (true) {
+    if (!(code0 | code1)) return [[lat0, lon0], [lat1, lon1]];
+    if (code0 & code1) return null;
 
-  panel.hidden = false;
+    const codeOut = code0 || code1;
+    let lat;
+    let lon;
+    if (codeOut & 8) {
+      lat = bounds.getNorth();
+      lon = lon0 + ((lon1 - lon0) * (lat - lat0)) / (lat1 - lat0);
+    } else if (codeOut & 4) {
+      lat = bounds.getSouth();
+      lon = lon0 + ((lon1 - lon0) * (lat - lat0)) / (lat1 - lat0);
+    } else if (codeOut & 2) {
+      lon = bounds.getEast();
+      lat = lat0 + ((lat1 - lat0) * (lon - lon0)) / (lon1 - lon0);
+    } else {
+      lon = bounds.getWest();
+      lat = lat0 + ((lat1 - lat0) * (lon - lon0)) / (lon1 - lon0);
+    }
+
+    if (codeOut === code0) {
+      lat0 = lat;
+      lon0 = lon;
+      code0 = outCode(lat0, lon0, bounds);
+    } else {
+      lat1 = lat;
+      lon1 = lon;
+      code1 = outCode(lat1, lon1, bounds);
+    }
+  }
+}
+
+function clipPolylineToBounds(poly, bounds) {
+  const result = [];
+  let current = [];
+  for (let i = 0; i < poly.length - 1; i++) {
+    const clipped = clipSegmentToBounds(poly[i], poly[i + 1], bounds);
+    if (!clipped) {
+      if (current.length >= 2) result.push(current);
+      current = [];
+      continue;
+    }
+    const [start, end] = clipped;
+    if (!current.length || pointKey(current[current.length - 1]) !== pointKey(start)) {
+      if (current.length >= 2) result.push(current);
+      current = [start];
+    }
+    current.push(end);
+  }
+  if (current.length >= 2) result.push(current);
+  return result;
+}
+
+function perpendicularDistanceM(point, a, b) {
+  const refLat = (a[0] + b[0]) / 2;
+  const m = mpd(refLat);
+  const px = (point[1] - a[1]) * m.lon;
+  const py = (point[0] - a[0]) * m.lat;
+  const bx = (b[1] - a[1]) * m.lon;
+  const by = (b[0] - a[0]) * m.lat;
+  const lenSq = bx * bx + by * by;
+  if (lenSq < 1e-9) return Math.hypot(px, py);
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / lenSq));
+  return Math.hypot(px - bx * t, py - by * t);
+}
+
+function simplifyPolyline(poly, toleranceM) {
+  if (poly.length <= 2) return poly;
+  let maxDist = 0;
+  let index = 0;
+  for (let i = 1; i < poly.length - 1; i++) {
+    const dist = perpendicularDistanceM(poly[i], poly[0], poly[poly.length - 1]);
+    if (dist > maxDist) {
+      index = i;
+      maxDist = dist;
+    }
+  }
+  if (maxDist <= toleranceM) return [poly[0], poly[poly.length - 1]];
+  const left = simplifyPolyline(poly.slice(0, index + 1), toleranceM);
+  const right = simplifyPolyline(poly.slice(index), toleranceM);
+  return [...left.slice(0, -1), ...right];
+}
+
+function resamplePolylineBySpacing(poly, spacingM) {
+  if (poly.length < 2) return poly;
+  const cum = cumLengths(poly);
+  const total = cum[cum.length - 1];
+  if (total <= spacingM) return [poly[0], poly[poly.length - 1]];
+  const result = [];
+  for (let d = 0; d < total; d += spacingM) {
+    result.push(pointAtDist(poly, cum, d));
+  }
+  result.push(pointAtDist(poly, cum, total));
+  return result;
+}
+
+function areaGeometrySignature(category, geometry) {
+  const points = geometry.map((point) => `${point[0].toFixed(AREA_DEDUPE_DECIMALS)},${point[1].toFixed(AREA_DEDUPE_DECIMALS)}`);
+  const forward = points.join("|");
+  const backward = [...points].reverse().join("|");
+  return `${category}:${forward < backward ? forward : backward}`;
+}
+
+function polylineLengthM(poly) {
+  if (!Array.isArray(poly) || poly.length < 2) return 0;
+  return cumLengths(poly).at(-1) || 0;
+}
+
+function areaGroupName(tags, category, id) {
+  return tags?.name || tags?.ref || `${AREA_LAYER_LABELS[category]} ${id}`;
+}
+
+function isRoundaboutTags(tags = {}) {
+  return tags.junction === "roundabout" || tags.junction === "circular";
+}
+
+function isClosedPolyline(poly, toleranceM = 2) {
+  return Array.isArray(poly) && poly.length >= 4 && haversineM(poly[0], poly[poly.length - 1]) <= toleranceM;
+}
+
+function areaCenterlineGroupKey(category, name) {
+  return normalizeAreaKey(`${category}_${name}`).toLowerCase();
+}
+
+function averagePointDistanceM(trackA, trackB) {
+  const n = Math.max(2, Math.min(24, Math.round(Math.min(trackA.length, trackB.length))));
+  const a = resamplePolyline(trackA, n);
+  const b = resamplePolyline(trackB, n);
+  const bForward = b.reduce((sum, point, index) => sum + haversineM(point, a[index]), 0) / n;
+  const bReverse = [...b].reverse().reduce((sum, point, index) => sum + haversineM(point, a[index]), 0) / n;
+  return Math.min(bForward, bReverse);
+}
+
+function shouldMergeAreaCenterline(a, b) {
+  if (a.category !== b.category) return false;
+  if (a.shape === "roundabout" || b.shape === "roundabout") return false;
+  const lenA = polylineLengthM(a.segment10mGeometry);
+  const lenB = polylineLengthM(b.segment10mGeometry);
+  if (lenA <= 0 || lenB <= 0) return false;
+  const lengthRatio = Math.min(lenA, lenB) / Math.max(lenA, lenB);
+  if (lengthRatio < AREA_CENTERLINE_LENGTH_RATIO) return false;
+  return averagePointDistanceM(a.segment10mGeometry, b.segment10mGeometry) <= AREA_CENTERLINE_MAX_DISTANCE_M;
+}
+
+function mergeAreaCenterlinePair(a, b) {
+  const centerline = computeCenterline(a.segment10mGeometry, b.segment10mGeometry);
+  const simplifiedGeometry = simplifyPolyline(centerline, AREA_SIMPLIFY_TOLERANCE_M);
+  const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+  return {
+    ...a,
+    id: `${a.id}+${b.id}`,
+    key: normalizeAreaKey(`${a.category}_${a.name}_${a.id}_${b.id}_centerline`),
+    sourceIds: [...(a.sourceIds || [a.id]), ...(b.sourceIds || [b.id])],
+    clippedGeometry: centerline,
+    simplifiedGeometry,
+    controlGeometry: simplifiedGeometry,
+    segment10mGeometry,
+    mergedCenterline: true,
+  };
+}
+
+function mergeAreaCenterlines(features) {
+  const groups = new Map();
+  for (const feature of features) {
+    const key = areaCenterlineGroupKey(feature.category, feature.name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(feature);
+  }
+
+  const merged = [];
+  for (const group of groups.values()) {
+    const used = new Set();
+    for (let i = 0; i < group.length; i++) {
+      if (used.has(i)) continue;
+      let current = group[i];
+      for (let j = i + 1; j < group.length; j++) {
+        if (used.has(j)) continue;
+        if (!shouldMergeAreaCenterline(current, group[j])) continue;
+        current = mergeAreaCenterlinePair(current, group[j]);
+        used.add(j);
+      }
+      used.add(i);
+      merged.push(current);
+    }
+  }
+  return merged;
+}
+
+function canStitchAreaFeatures(a, b) {
+  return a.category === b.category &&
+    a.shape !== "roundabout" &&
+    b.shape !== "roundabout" &&
+    areaCenterlineGroupKey(a.category, a.name) === areaCenterlineGroupKey(b.category, b.name);
+}
+
+function stitchAreaFeaturePair(a, b) {
+  const options = [
+    { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry[0]), geometry: [...a.controlGeometry, ...b.controlGeometry.slice(1)] },
+    { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry.at(-1)), geometry: [...a.controlGeometry, ...[...b.controlGeometry].reverse().slice(1)] },
+    { distance: haversineM(a.controlGeometry[0], b.controlGeometry.at(-1)), geometry: [...b.controlGeometry, ...a.controlGeometry.slice(1)] },
+    { distance: haversineM(a.controlGeometry[0], b.controlGeometry[0]), geometry: [...[...b.controlGeometry].reverse(), ...a.controlGeometry.slice(1)] },
+  ].sort((x, y) => x.distance - y.distance);
+
+  if (options[0].distance > 6) return null;
+  const controlGeometry = simplifyPolyline(options[0].geometry, AREA_SIMPLIFY_TOLERANCE_M);
+  return {
+    ...a,
+    id: `${a.id}+${b.id}`,
+    key: normalizeAreaKey(`${a.category}_${a.name}_${a.id}_${b.id}_stitched`),
+    sourceIds: [...(a.sourceIds || [a.id]), ...(b.sourceIds || [b.id])],
+    clippedGeometry: controlGeometry,
+    simplifiedGeometry: controlGeometry,
+    controlGeometry,
+    segment10mGeometry: resamplePolylineBySpacing(controlGeometry, AREA_SEGMENT_SPACING_M),
+  };
+}
+
+function stitchConnectedAreaFeatures(features) {
+  let pending = [...features];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer:
+    for (let i = 0; i < pending.length; i++) {
+      for (let j = i + 1; j < pending.length; j++) {
+        if (!canStitchAreaFeatures(pending[i], pending[j])) continue;
+        const stitched = stitchAreaFeaturePair(pending[i], pending[j]);
+        if (!stitched) continue;
+        pending = pending.filter((_, index) => index !== i && index !== j);
+        pending.push(stitched);
+        changed = true;
+        break outer;
+      }
+    }
+  }
+  return pending;
+}
+
+function buildAreaFeatures(data, bounds) {
+  const features = [];
+  const seenSignatures = new Set();
+  for (const el of data.elements || []) {
+    if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
+    const category = classifyAreaWay(el.tags || {});
+    if (!category) continue;
+
+    const rawGeometry = normalizeOverpassGeometry(el.geometry);
+    if (rawGeometry.length < 2) continue;
+    const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
+    for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
+      const clippedGeometry = clippedParts[partIndex];
+      const tags = el.tags || {};
+      const roundabout = isRoundaboutTags(tags);
+      const closed = isClosedPolyline(clippedGeometry);
+      const simplifiedGeometry = roundabout && closed
+        ? clippedGeometry
+        : simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+      const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+      const signature = areaGeometrySignature(category, segment10mGeometry);
+      if (seenSignatures.has(signature)) continue;
+      seenSignatures.add(signature);
+      const name = areaGroupName(tags, category, el.id);
+      const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
+      if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      features.push({
+        id: el.id,
+        key,
+        category,
+        shape: roundabout ? "roundabout" : "line",
+        closed,
+        name,
+        sourceIds: [el.id],
+        tags,
+        rawGeometry,
+        clippedGeometry,
+        simplifiedGeometry,
+        controlGeometry: simplifiedGeometry,
+        segment10mGeometry,
+      });
+    }
+  }
+  return stitchConnectedAreaFeatures(mergeAreaCenterlines(features));
+}
+
+function areaFeatureLabel(feature) {
+  const roadType = feature.tags.highway || feature.tags.railway || "";
+  const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
+  return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
+}
+
+function normalizeOverpassGeometry(geometry) {
+  if (!Array.isArray(geometry)) return [];
+  return geometry
+    .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lon))
+    .map((point) => [point.lat, point.lon]);
+}
+
+function renderAreaFeatures() {
+  areaRawLayer.clearLayers();
+  areaProcessedLayer.clearLayers();
+
+  const counts = new Map(Object.keys(AREA_LAYER_LABELS).map((key) => [key, 0]));
+  let visibleCount = 0;
+  for (const feature of areaFeatures) {
+    counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
+    if (!areaLayerVisibility.get(feature.category)) continue;
+    visibleCount += 1;
+
+    const style = AREA_STYLE[feature.category];
+    if (AREA_DRAW_RAW_GEOMETRY) {
+      L.polyline(feature.clippedGeometry, {
+        color: style.color,
+        weight: Math.max(1, style.weight - 1),
+        opacity: 0.22,
+        dashArray: "2 6",
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(areaRawLayer);
+    }
+
+    const processed = L.polyline(feature.controlGeometry, {
+      color: style.color,
+      weight: style.weight,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(areaProcessedLayer);
+    processed.bindTooltip(areaFeatureLabel(feature), { sticky: true });
+  }
+
+  if (areaFeatures.length) {
+    const summary = [...counts.entries()]
+      .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
+      .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
+      .join(" · ");
+    setStatus(`Bereich geladen: ${visibleCount}/${areaFeatures.length} Linien sichtbar${summary ? ` · ${summary}` : ""}`);
+  }
+}
+
+function setAreaSelectMode(active) {
+  areaSelectMode = active;
+  document.getElementById("btn-area-select")?.classList.toggle("active", areaSelectMode);
+  map.getContainer().style.cursor = areaSelectMode ? "crosshair" : "";
+  if (!areaSelectMode) {
+    areaDragStart = null;
+    if (areaDraftRect) {
+      areaSelectionLayer.removeLayer(areaDraftRect);
+      areaDraftRect = null;
+    }
+  }
+}
+
+function setAreaSelectionBounds(bounds) {
+  if (!bounds?.isValid?.()) {
+    setStatus("Bereichsauswahl ist ungueltig.", true);
+    return;
+  }
+  areaSelectionBounds = bounds;
+  if (areaSelectionRect) areaSelectionLayer.removeLayer(areaSelectionRect);
+  areaSelectionRect = L.rectangle(bounds, {
+    color: "#0f766e",
+    weight: 2,
+    fillColor: "#14b8a6",
+    fillOpacity: 0.08,
+    dashArray: "6 4",
+  }).addTo(areaSelectionLayer);
+  const sizeM = [
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]),
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]),
+  ];
+  setStatus(`Bereich gewaehlt: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m`);
+}
+
+function beginAreaSelection(e) {
+  if (!areaSelectMode) return;
+  L.DomEvent.stop(e);
+  areaDragStart = e.latlng;
+  map.dragging.disable();
+  if (areaDraftRect) areaSelectionLayer.removeLayer(areaDraftRect);
+  areaDraftRect = L.rectangle(L.latLngBounds(areaDragStart, areaDragStart), {
+    color: "#0f766e",
+    weight: 1,
+    fillColor: "#14b8a6",
+    fillOpacity: 0.05,
+    dashArray: "4 4",
+  }).addTo(areaSelectionLayer);
+}
+
+function updateAreaSelection(e) {
+  if (!areaSelectMode || !areaDragStart || !areaDraftRect) return;
+  areaDraftRect.setBounds(L.latLngBounds(areaDragStart, e.latlng));
+}
+
+function finishAreaSelection(e) {
+  if (!areaSelectMode || !areaDragStart) return;
+  const bounds = L.latLngBounds(areaDragStart, e.latlng);
+  map.dragging.enable();
+  if (areaDraftRect) {
+    areaSelectionLayer.removeLayer(areaDraftRect);
+    areaDraftRect = null;
+  }
+  areaDragStart = null;
+  setAreaSelectMode(false);
+  setAreaSelectionBounds(bounds);
 }
 
 function drawRoute(finalTrack, stations, fromTo, ref, fitView = false) {
@@ -995,8 +1428,6 @@ function drawRoute(finalTrack, stations, fromTo, ref, fitView = false) {
   const from = fromTo?.from || "";
   const to = fromTo?.to || "";
   setDirectionText(from && to ? `${from} → ${to}` : from || to);
-
-  updateStationPanel(stations, ref);
 
   if (fitView) {
     map.fitBounds(L.latLngBounds(finalTrack), { padding: [48, 48], maxZoom: 13 });
@@ -1153,7 +1584,7 @@ function toggleSplineEdit() {
 /**
  * Exportiert den finalen Track + Stationsdaten als UE5-kompatibles JSON.
  *
- * Koordinatensystem: Berliner Referenzsystem in cm, damit alle Linien im selben Stadtraum landen
+ * Koordinatensystem: lokal metrisch, Origin = erster Spline-Kontrollpunkt
  *   X = Nord  (cm)
  *   Y = Ost   (cm)
  *   Z = 0     (Höhe später in UE setzen)
@@ -1207,28 +1638,19 @@ function exportToUnreal(buildOnly = false) {
       ? finalTrack.slice(1).reduce((acc, _, i) => acc + haversineM(finalTrack[i], finalTrack[i + 1]), 0)
       : rawTrackLengthM;
 
-  // ── Koordinaten-Konversion: WGS84 → lokales ENU → UE cm ─────────────────
-  //
-  // Equirectangular / lokales ENU (Flat-Earth-Näherung, Fehler < 0,05 % bei 18 km).
-  // Mercator würde bei 52,5 °N alle Abstände um Faktor ~1,64 strecken, was dazu
-  // führt, dass pos_cm und dist_m nicht mehr übereinstimmen und Stationen an der
-  // falschen Position entlang der Spline landen.
-  //
-  // UE-Level-Achsenkonvention (bestätigt durch Nutzertests):
-  //   UE X = -(NordDelta in m × 100)   →  positiv = Richtung geogr. Süd
-  //   UE Y = -(OstDelta  in m × 100)   →  positiv = Richtung geogr. West
-  //   UE Z = Höhe (cm)
-  //
-  // Import-Script macht pass-through – keine weiteren Transformationen nötig.
-  const [originLat, originLon] = finalTrack[0] || ctrlPts[0];
-  const _enuScale = mpd(originLat); // { lat: m/deg, lon: m/deg } am Ursprungsbreitengrad
+  // ── Koordinaten-Konversion: WGS84 → lokales ENU → UE cm ───────────────────
+  const [lat0, lon0] = finalTrack[0] || ctrlPts[0];
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  const MPD_LAT = 111320;
+  const MPD_LON = 111320 * cosLat;
 
+  // UE5: X=Ost, Y=Nord, Z=hoch (alles in cm)
   function toUEcm(lat, lon, zM = 0) {
-    const northDeltaM = (lat - originLat) * _enuScale.lat;
-    const eastDeltaM  = (lon - originLon) * _enuScale.lon;
+    const eastM = (lon - lon0) * MPD_LON;
+    const northM = (lat - lat0) * MPD_LAT;
     return [
-      +(-northDeltaM * 100).toFixed(1),  // UE X = -NorthDelta cm
-      +(-eastDeltaM  * 100).toFixed(1),  // UE Y = -EastDelta  cm
+      +(eastM * 100).toFixed(1),
+      +(northM * 100).toFixed(1),
       +(zM * 100).toFixed(1),
     ];
   }
@@ -1264,22 +1686,12 @@ function exportToUnreal(buildOnly = false) {
   }
 
   // ── Stationen auf finale Web-Route projizieren ───────────────────────────
-  // point und tangent kommen direkt von der Mittellinie bei distAlongTrack,
-  // NICHT vom projizierten OSM-Stop (der ggf. auf Rail 2 liegt).
-  const _finalCum = cumLengths(finalTrack);
-  const finalStations = masterStations.map((s) => {
-    const proj = projectOntoTrack([s.lat, s.lon], finalTrack);
-    const centerPoint   = pointAtDist(finalTrack, _finalCum, proj.distAlongTrack);
-    const centerTangent = tangentAtDist(finalTrack, _finalCum, proj.distAlongTrack);
-    return {
-      ...proj,
-      point:   centerPoint,
-      tangent: centerTangent,
-      name:        s.name,
-      halfLengthM: s.halfLengthM,
-      halfWidthM:  s.halfWidthM,
-    };
-  });
+  const finalStations = masterStations.map((s) => ({
+    ...projectOntoTrack([s.lat, s.lon], finalTrack),
+    name: s.name,
+    halfLengthM: s.halfLengthM,
+    halfWidthM: s.halfWidthM,
+  }));
   const sorted = [...finalStations].sort((a, b) => a.distAlongTrack - b.distAlongTrack);
 
   // ── Sections: tunnel / platform auf Basis der finalen Route ──────────────
@@ -1345,16 +1757,15 @@ function exportToUnreal(buildOnly = false) {
   const payload = {
     version: 2,
     ref,
-    origin_wgs84: { lat: +originLat.toFixed(7), lon: +originLon.toFixed(7) },
+    origin_wgs84: { lat: lat0, lon: lon0 },
     coordinate_system: {
-      space: "local_ue_cm",
-      x_axis: "south",
-      y_axis: "west",
+      space: "local_enu_cm",
+      x_axis: "east",
+      y_axis: "north",
       z_axis: "up",
-      projection: "local_enu_equirectangular",
       origin: "first_final_route_point",
     },
-    coordinate_note: "X=SouthDelta Y=WestDelta Z=Up in cm. Equirectangular/ENU projection (flat-earth, scale at origin lat). 1 cm = 1 true cm – dist_m*100 matches spline arc length. Import as-is, no transforms needed.",
+    coordinate_note: "X=East Y=North Z=Up in cm. Origin is first final-route point.",
     query_hint: "To check if dist_m is in a station: find section where from_m <= dist_m <= to_m",
     spline: {
       type: "catmull_rom_control_points",
@@ -1404,7 +1815,7 @@ function exportToUnreal(buildOnly = false) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${ref}.json`;
+  a.download = `ue5-${ref}-spline.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 
@@ -1412,65 +1823,6 @@ function exportToUnreal(buildOnly = false) {
     `UE5-Export: ${sorted.length} Stationen · ${sections.length} Abschnitte · ${(finalRouteLengthM / 1000).toFixed(1)} km`,
   );
   return payload;
-}
-
-function saveJsonFile(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function saveBlobFile(filename, blob) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-async function exportAllLinesToUnreal() {
-  const originalRef = select?.value || lastLoadData?.ref || LINES[0];
-  const zip = new JSZip();
-  let exportedCount = 0;
-  let skippedCount = 0;
-
-  try {
-    for (const ref of LINES) {
-      setStatus(`Prüfe ${ref} für UE-Export …`);
-      if (!tryLoadRouteFromCache(ref)) {
-        skippedCount += 1;
-        console.warn(`UE-Export übersprungen: ${ref} ist nicht lokal geladen oder im Cache.`);
-        continue;
-      }
-
-      const payload = exportToUnreal(true);
-      if (!payload) {
-        skippedCount += 1;
-        console.warn(`UE-Export übersprungen: ${ref} hat keinen exportierbaren Payload.`);
-        continue;
-      }
-
-      zip.file(`${ref}.json`, JSON.stringify(payload, null, 2));
-      exportedCount += 1;
-    }
-
-    if (exportedCount === 0) {
-      throw new Error("Kein lokaler Linien-Export gefunden.");
-    }
-
-    const blob = await zip.generateAsync({ type: "blob" });
-    saveBlobFile(`ue-lines.zip`, blob);
-  } finally {
-    if (select && originalRef) {
-      select.value = originalRef;
-      loadLine(originalRef);
-    }
-  }
-
-  setStatus(`UE-ZIP exportiert: ${exportedCount} Linien, ${skippedCount} übersprungen`);
 }
 
 function exportMaster() {
@@ -1486,6 +1838,7 @@ function exportMaster() {
     return;
   }
   const ref = lastLoadData?.ref || "?";
+  const uePayload = exportToUnreal(true);
   const payload = {
     v: 4,
     ref,
@@ -1498,12 +1851,608 @@ function exportMaster() {
       halfWidthM: +s.halfWidthM.toFixed(2),
     })),
     // UE-Importer kann direkt diese Felder nutzen (kein separater UE-Export nötig)
+    ...uePayload,
   };
-  saveJsonFile(`ubahn-master-${ref}.json`, payload);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `ubahn-master-${ref}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function areaFeatureExportClass(feature) {
+  return feature.tags.highway || feature.tags.railway || "";
+}
+
+function areaTagBool(value) {
+  return value != null && value !== "no" && value !== "false" && value !== "0";
+}
+
+function areaTagInt(value) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function areaTagFloat(value) {
+  if (value == null) return null;
+  const normalized = String(value).replace(",", ".").match(/[0-9]+(?:\.[0-9]+)?/);
+  if (!normalized) return null;
+  const n = Number.parseFloat(normalized[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function areaFeatureWidthM(feature) {
+  const explicitWidth = areaTagFloat(feature.tags.width);
+  if (explicitWidth != null) return explicitWidth;
+
+  const lanes = areaTagFloat(feature.tags.lanes);
+  if (lanes != null && lanes > 0) return lanes * 3.5;
+
+  switch (feature.category) {
+    case "motorway":
+      return 14;
+    case "major_road":
+      return 9;
+    case "city_road":
+      return 6;
+    case "service":
+      return 3.5;
+    case "rail_tram":
+    case "rail_train":
+    case "rail_subway":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+function areaPcgRowName(key, pointIndex) {
+  return `${key}_${String(pointIndex).padStart(4, "0")}`;
+}
+
+function buildAreaPcgSplines() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+
+  const origin = selected[0].controlGeometry[0];
+  const [lat0, lon0] = origin;
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * cosLat;
+
+  function toPointCm([lat, lon]) {
+    return {
+      X: +(((lon - lon0) * metersPerDegreeLon) * 100).toFixed(1),
+      Y: +(((lat - lat0) * metersPerDegreeLat) * 100).toFixed(1),
+      Z: 0,
+    };
+  }
+
+  const rows = [];
+  for (const feature of selected) {
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    const controlPoints = feature.controlGeometry.map(toPointCm);
+    const pointCount = controlPoints.length;
+    const bClosed = Boolean(feature.closed || isClosedPolyline(feature.controlGeometry));
+    controlPoints.forEach((point, pointIndex) => {
+      rows.push({
+        Name: areaPcgRowName(feature.key, pointIndex),
+        SplineKey: feature.key,
+        PointIndex: pointIndex,
+        PointCount: pointCount,
+        Type: feature.category,
+        Shape: feature.shape || "line",
+        Street: feature.name || "",
+        OsmClass: areaFeatureExportClass(feature),
+        bBridge: areaTagBool(feature.tags.bridge),
+        bTunnel: areaTagBool(feature.tags.tunnel),
+        OsmLayer: areaTagInt(feature.tags.layer),
+        bClosed,
+        X: point.X,
+        Y: point.Y,
+        Z: point.Z,
+      });
+    });
+  }
+  return rows;
+}
+
+function buildAreaPythonSplineData() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+
+  const origin = selected[0].controlGeometry[0];
+  const [lat0, lon0] = origin;
+  const cosLat = Math.cos((lat0 * Math.PI) / 180);
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * cosLat;
+
+  function toPointCm([lat, lon]) {
+    return [
+      +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
+      +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+      0,
+    ];
+  }
+
+  return selected.map((feature) => {
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    return {
+      SplineKey: feature.key,
+      Type: feature.category,
+      Shape: feature.shape || "line",
+      Street: feature.name || "",
+      OsmClass: areaFeatureExportClass(feature),
+      WidthM: +areaFeatureWidthM(feature).toFixed(2),
+      bBridge: areaTagBool(feature.tags.bridge),
+      bTunnel: areaTagBool(feature.tags.tunnel),
+      OsmLayer: areaTagInt(feature.tags.layer),
+      bClosed: Boolean(feature.closed || isClosedPolyline(feature.controlGeometry)),
+      Points: feature.controlGeometry.map(toPointCm),
+    };
+  });
+}
+
+function exportAreaPcgSplines() {
+  try {
+    const payload = buildAreaPcgSplines();
+    if (!payload) {
+      setStatus("Keine sichtbaren Bereichsdaten fuer PCG-Export vorhanden.", true);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ue-pcg-area-splines.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`PCG-Export: ${payload.length} DataTable-Zeilen`);
+  } catch (error) {
+    setStatus(`PCG-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
+function buildAreaUnrealPythonScript(rows) {
+  const jsonText = JSON.stringify(rows, null, 2);
+  const jsonLiteral = JSON.stringify(jsonText);
+  return `import json
+import re
+
+import unreal
+
+
+STREET_ROWS = json.loads(${jsonLiteral})
+ACTOR_LABEL_PREFIX = "CITY_STREET"
+SPLINE_COMPONENT_NAME = "StreetSpline"
+WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
+FORCE_ZERO_Z = True
+LINEAR_SPLINES = True
+
+
+def log(level, message):
+    unreal.log(f"[{level}] {message}")
+
+
+def fail(message):
+    unreal.log_error(message)
+    raise RuntimeError(message)
+
+
+def destroy_existing_actor_with_prefix(prefix):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label().startswith(prefix):
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def require_key(row, key, row_index):
+    if key not in row:
+        fail(f"Row {row_index} is missing required key '{key}': {row}")
+    return row[key]
+
+
+def require_string(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if not isinstance(value, str) or not value:
+        fail(f"Row {row_index} key '{key}' must be a non-empty string")
+    return value
+
+
+def require_int(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if isinstance(value, bool) or not isinstance(value, int):
+        fail(f"Row {row_index} key '{key}' must be an integer")
+    return value
+
+
+def require_bool(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if not isinstance(value, bool):
+        fail(f"Row {row_index} key '{key}' must be a bool")
+    return value
+
+
+def require_number(row, key, row_index):
+    value = require_key(row, key, row_index)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        fail(f"Row {row_index} key '{key}' must be numeric")
+    return float(value)
+
+
+def validate_row(row, row_index):
+    if not isinstance(row, dict):
+        fail(f"Row {row_index} must be a JSON object")
+
+    return {
+        "Name": require_string(row, "Name", row_index),
+        "SplineKey": require_string(row, "SplineKey", row_index),
+        "PointIndex": require_int(row, "PointIndex", row_index),
+        "PointCount": require_int(row, "PointCount", row_index),
+        "Type": require_string(row, "Type", row_index),
+        "Shape": require_string(row, "Shape", row_index),
+        "Street": str(row.get("Street", "")),
+        "OsmClass": str(row.get("OsmClass", "")),
+        "bBridge": require_bool(row, "bBridge", row_index),
+        "bTunnel": require_bool(row, "bTunnel", row_index),
+        "OsmLayer": require_int(row, "OsmLayer", row_index),
+        "bClosed": require_bool(row, "bClosed", row_index),
+        "X": require_number(row, "X", row_index),
+        "Y": require_number(row, "Y", row_index),
+        "Z": require_number(row, "Z", row_index),
+    }
+
+
+def group_rows(rows):
+    groups = {}
+    for row_index, row in enumerate(rows):
+        validated = validate_row(row, row_index)
+        groups.setdefault(validated["SplineKey"], []).append(validated)
+    if not groups:
+        fail("No street spline rows found")
+    return groups
+
+
+def validate_group(spline_key, rows):
+    point_counts = {row["PointCount"] for row in rows}
+    if len(point_counts) != 1:
+        fail(f"Spline '{spline_key}' has inconsistent PointCount values: {sorted(point_counts)}")
+
+    point_count = point_counts.pop()
+    if point_count != len(rows):
+        fail(f"Spline '{spline_key}' declares PointCount={point_count}, but has {len(rows)} rows")
+    if point_count < 2:
+        fail(f"Spline '{spline_key}' needs at least 2 points")
+
+    sorted_rows = sorted(rows, key=lambda row: row["PointIndex"])
+    actual_indices = [row["PointIndex"] for row in sorted_rows]
+    expected_indices = list(range(point_count))
+    if actual_indices != expected_indices:
+        fail(f"Spline '{spline_key}' has invalid PointIndex sequence: {actual_indices}")
+    return sorted_rows
+
+
+def sanitize_label_part(value):
+    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")
+    return sanitized or "Unnamed"
+
+
+def point_to_vector(row):
+    return unreal.Vector(
+        row["X"] + WORLD_OFFSET_CM.x,
+        row["Y"] + WORLD_OFFSET_CM.y,
+        (0.0 if FORCE_ZERO_Z else row["Z"]) + WORLD_OFFSET_CM.z,
+    )
+
+
+def spawn_empty_actor(label):
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        unreal.Actor,
+        unreal.Vector(0.0, 0.0, 0.0),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    return actor
+
+
+def add_spline_component(actor):
+    if not hasattr(actor, "add_component_by_class"):
+        fail("Actor.add_component_by_class is not exposed. Use the file import script with a BP actor fallback.")
+
+    component = actor.add_component_by_class(
+        unreal.SplineComponent,
+        False,
+        unreal.Transform(),
+        False,
+    )
+    if component is None:
+        fail(f"Failed to add SplineComponent to actor '{actor.get_actor_label()}'")
+    component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
+    component.rename(SPLINE_COMPONENT_NAME)
+    return component
+
+
+def set_editor_property_if_present(obj, property_name, value):
+    try:
+        obj.set_editor_property(property_name, value)
+        return True
+    except Exception:
+        return False
+
+
+def configure_spline_component(spline_component, rows):
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    spline_component.clear_spline_points(False)
+
+    for row in rows:
+        spline_component.add_spline_point(point_to_vector(row), unreal.SplineCoordinateSpace.LOCAL, False)
+
+    for index in range(len(rows)):
+        point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
+        spline_component.set_spline_point_type(index, point_type, False)
+
+    if hasattr(spline_component, "set_closed_loop"):
+        spline_component.set_closed_loop(bool(rows[0]["bClosed"]), False)
+    elif bool(rows[0]["bClosed"]):
+        fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
+
+    spline_component.update_spline()
+
+
+def set_actor_tags(actor, rows):
+    first = rows[0]
+    tags = ["CityStreet", first["SplineKey"], first["Type"], first["Shape"], first["OsmClass"]]
+    if first["Street"]:
+        tags.append(first["Street"])
+    if first["bBridge"]:
+        tags.append("Bridge")
+    if first["bTunnel"]:
+        tags.append("Tunnel")
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+
+
+def create_street_spline_actor(spline_key, rows):
+    sorted_rows = validate_group(spline_key, rows)
+    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(spline_key)}"
+    actor = spawn_empty_actor(label)
+    spline_component = add_spline_component(actor)
+    configure_spline_component(spline_component, sorted_rows)
+    set_actor_tags(actor, sorted_rows)
+    return actor
+
+
+def main():
+    groups = group_rows(STREET_ROWS)
+    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    created = 0
+    for spline_key, rows in groups.items():
+        create_street_spline_actor(spline_key, rows)
+        created += 1
+    log("INFO", f"Imported {created} city street splines from {len(STREET_ROWS)} point rows")
+
+
+main()
+`;
+}
+
+function buildCompactAreaUnrealPythonScript(splines) {
+  const jsonLiteral = JSON.stringify(JSON.stringify(splines));
+  return `import json
+import re
+
+import unreal
+
+
+STREET_SPLINES = json.loads(${jsonLiteral})
+STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest"
+ACTOR_LABEL_PREFIX = "CITY_STREET"
+SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
+WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
+FORCE_ZERO_Z = True
+LINEAR_SPLINES = True
+
+
+def fail(message):
+    unreal.log_error(message)
+    raise RuntimeError(message)
+
+
+def destroy_existing_actor_with_prefix(prefix):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label().startswith(prefix):
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
+def load_bp_class(asset_path):
+    asset_class = unreal.EditorAssetLibrary.load_blueprint_class(asset_path)
+    if asset_class is None:
+        fail(f"Could not load Blueprint class: {asset_path}")
+    return asset_class
+
+
+def sanitize_label_part(value):
+    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", str(value)).strip("_")
+    return sanitized or "Unnamed"
+
+
+def point_to_vector(point):
+    if not isinstance(point, list) or len(point) != 3:
+        fail(f"Invalid point: {point}")
+    x, y, z = point
+    if isinstance(x, bool) or isinstance(y, bool) or isinstance(z, bool):
+        fail(f"Invalid bool coordinate in point: {point}")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+        fail(f"Invalid numeric coordinate in point: {point}")
+    return unreal.Vector(
+        float(x) + WORLD_OFFSET_CM.x,
+        float(y) + WORLD_OFFSET_CM.y,
+        (0.0 if FORCE_ZERO_Z else float(z)) + WORLD_OFFSET_CM.z,
+    )
+
+
+def require_spline(row, index):
+    if not isinstance(row, dict):
+        fail(f"Spline {index} must be an object")
+    key = row.get("SplineKey")
+    points = row.get("Points")
+    if not isinstance(key, str) or not key:
+        fail(f"Spline {index} has no valid SplineKey")
+    if not isinstance(points, list) or len(points) < 2:
+        fail(f"Spline '{key}' needs at least 2 points")
+    return row
+
+
+def find_spline_component(actor):
+    spline_components = actor.get_components_by_class(unreal.SplineComponent)
+    for component_name in SPLINE_COMPONENT_NAMES:
+        for component in spline_components:
+            if component.get_name() == component_name:
+                return component
+    if spline_components:
+        return spline_components[0]
+    fail(f"No SplineComponent found on actor '{actor.get_actor_label()}'. Add one to BP_CityTest.")
+
+
+def set_editor_property_if_present(obj, property_name, value):
+    try:
+        obj.set_editor_property(property_name, value)
+        return True
+    except Exception:
+        return False
+
+
+def configure_spline_component(spline_component, row):
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    spline_component.clear_spline_points(False)
+    for point in row["Points"]:
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+    for index in range(len(row["Points"])):
+        point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
+        spline_component.set_spline_point_type(index, point_type, False)
+    if hasattr(spline_component, "set_closed_loop"):
+        spline_component.set_closed_loop(bool(row.get("bClosed", False)), False)
+    elif bool(row.get("bClosed", False)):
+        fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
+    spline_component.update_spline()
+
+
+def set_actor_tags(actor, row):
+    tags = [
+        "CityStreet",
+        f"Strasse Name:{row.get('Street', '') or row.get('SplineKey', '')}",
+        f"Typ:{row.get('Type', '')}",
+        f"Breite:{float(row.get('WidthM', 0.0)):.2f}",
+        f"SplineKey:{row.get('SplineKey', '')}",
+        f"OsmClass:{row.get('OsmClass', '')}",
+    ]
+    if row.get("bBridge"):
+        tags.append("Bridge")
+    if row.get("bTunnel"):
+        tags.append("Tunnel")
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+
+
+def create_street_spline_actor(actor_class, row):
+    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        actor_class,
+        unreal.Vector(0.0, 0.0, 0.0),
+        unreal.Rotator(0.0, 0.0, 0.0),
+    )
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    spline_component = find_spline_component(actor)
+    configure_spline_component(spline_component, row)
+    set_actor_tags(actor, row)
+    return actor
+
+
+def main():
+    actor_class = load_bp_class(STREET_BP_PATH)
+    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    point_count = 0
+    for index, source_row in enumerate(STREET_SPLINES):
+        row = require_spline(source_row, index)
+        point_count += len(row["Points"])
+        create_street_spline_actor(actor_class, row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points")
+
+
+main()
+`;
+}
+
+let latestAreaPythonScript = "";
+
+function downloadTextFile(filename, content, type = "text/plain") {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function showPythonCodeModal(code) {
+  latestAreaPythonScript = code;
+  const modal = document.getElementById("python-code-modal");
+  const output = document.getElementById("python-code-output");
+  if (!modal || !output) {
+    downloadTextFile("ue_import_city_street_splines_embedded.py", code, "text/x-python");
+    return;
+  }
+  output.value = code;
+  modal.hidden = false;
+  output.focus();
+  output.select();
+}
+
+function closePythonCodeModal() {
+  const modal = document.getElementById("python-code-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function copyPythonCodeFromModal() {
+  const output = document.getElementById("python-code-output");
+  const code = output?.value || latestAreaPythonScript;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    setStatus("UE-Python-Code kopiert.");
+  } catch {
+    output?.focus();
+    output?.select();
+    document.execCommand("copy");
+    setStatus("UE-Python-Code kopiert.");
+  }
+}
+
+function exportAreaUnrealPython() {
+  try {
+    const payload = buildAreaPythonSplineData();
+    if (!payload) {
+      setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
+      return;
+    }
+    const code = buildCompactAreaUnrealPythonScript(payload);
+    showPythonCodeModal(code);
+    const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
+    setStatus(`UE-Python-Code: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
+  } catch (error) {
+    setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
+  }
 }
 
 function applyEditsFromParsed(parsed) {
-  // v4: reines Master-Format
+  // v4: Master + eingebetteter UE-Importblock
   if (parsed?.v === 4) {
     if (!Array.isArray(parsed.controlPoints) || !Array.isArray(parsed.masterStations)) {
       setStatus("Ungültige Master-Datei (v4): controlPoints und masterStations erforderlich.", true);
@@ -1747,12 +2696,21 @@ function loadLine(ref) {
     return;
   }
 
-  // Cache-first: Master oder zuletzt gecachte Overpass-Daten verwenden
-  if (tryLoadRouteFromCache(ref)) {
+  // Cache-first: eigener Master-State (inkl. Edits)
+  if (loadCachedMasterForRef(ref)) {
+    setStatus(`Linie ${ref} aus Cache geladen.`);
     return;
   }
 
   if (uploadedJsonData) {
+    loadFromUploadedData(uploadedJsonData, ref);
+    return;
+  }
+
+  // Fallback: zuletzt gecachte Overpass-Antwort
+  const cachedOverpass = loadCachedOverpassDataset();
+  if (cachedOverpass) {
+    uploadedJsonData = cachedOverpass;
     loadFromUploadedData(uploadedJsonData, ref);
     return;
   }
@@ -1775,8 +2733,6 @@ out geom;`;
 }
 
 async function importFromOverpass(ref) {
-  // Bewusst KEIN Cache-Check – diese Funktion fetcht immer frisch von Overpass,
-  // damit der Nutzer auch gecachte Linien neu laden kann.
   try {
     setStatus(`Lade ${ref} direkt von Overpass …`);
     setDirectionText("");
@@ -1803,12 +2759,154 @@ async function importFromOverpass(ref) {
     masterStations = null;
     lastRelation = null;
     loadLine(ref);
+    return true;
   } catch (error) {
     setStatus(`Overpass-Direktimport fehlgeschlagen: ${error.message}`, true);
+    return false;
   }
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
+
+async function importAreaFromOverpass(bounds = areaSelectionBounds) {
+  if (!bounds?.isValid?.()) {
+    setStatus("Erst einen Bereich auf der Karte ziehen.", true);
+    return false;
+  }
+
+  try {
+    const selectedCategories = getSelectedAreaCategories();
+    if (!selectedCategories.length) {
+      setStatus("Mindestens einen Bereichs-Layer anhaken.", true);
+      return false;
+    }
+    const areaKm2 = areaBoundsSizeKm2(bounds);
+    if (areaKm2 > AREA_MAX_REQUEST_KM2) {
+      setStatus(`Bereich zu gross (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
+      return false;
+    }
+    const expensiveLayers = selectedCategories.filter((category) => AREA_EXPENSIVE_LAYERS.has(category));
+    if (areaKm2 > AREA_LARGE_REQUEST_KM2 && expensiveLayers.length) {
+      const expensiveLabels = expensiveLayers.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+      setStatus(
+        `Bereich ${areaKm2.toFixed(1)} km² ist fuer ${expensiveLabels} zu gross. Diese Layer abwaehlen oder kleiner als ${AREA_LARGE_REQUEST_KM2} km² ziehen.`,
+        true,
+      );
+      return false;
+    }
+    const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
+    if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
+      areaFeatures = areaCache.features;
+      renderAreaFeatures();
+      return true;
+    }
+
+    const layerLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+    setStatus(`Lade Bereichsdaten von Overpass (${areaKm2.toFixed(2)} km², ${layerLabels}) ...`);
+    const response = await fetch(OVERPASS_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: buildAreaOverpassQuery(bounds, selectedCategories),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    if (!data || typeof data !== "object" || !Array.isArray(data.elements)) {
+      throw new Error("Antwort ohne elements");
+    }
+
+    areaFeatures = buildAreaFeatures(data, bounds);
+    areaCache = { key: cacheKey, bounds, features: areaFeatures };
+    if (!areaFeatures.length) {
+      areaRawLayer.clearLayers();
+      areaProcessedLayer.clearLayers();
+      setStatus("Keine passenden Strassen- oder Schienen-Ways im Bereich gefunden.", true);
+      return false;
+    }
+    renderAreaFeatures();
+    return true;
+  } catch (error) {
+    setStatus(`Bereichsimport fehlgeschlagen: ${error.message}`, true);
+    return false;
+  }
+}
+
+async function importLineAndAreaFromOverpass(ref) {
+  const lineLoaded = await importFromOverpass(ref);
+  if (!lineLoaded) return;
+  const bounds = areaSelectionBounds?.isValid?.() ? areaSelectionBounds : map.getBounds();
+  await importAreaFromOverpass(bounds);
+}
+
+async function importCurrentOverpassSelection(ref) {
+  if (areaSelectionBounds?.isValid?.()) {
+    await importAreaFromOverpass(areaSelectionBounds);
+    map.fitBounds(areaSelectionBounds, { padding: [48, 48], maxZoom: 14 });
+    return;
+  }
+  await importLineAndAreaFromOverpass(ref);
+}
+
+function boundsFromNominatimResult(result) {
+  if (!Array.isArray(result?.boundingbox) || result.boundingbox.length !== 4) return null;
+  const south = Number(result.boundingbox[0]);
+  const north = Number(result.boundingbox[1]);
+  const west = Number(result.boundingbox[2]);
+  const east = Number(result.boundingbox[3]);
+  if (![south, north, west, east].every(Number.isFinite)) return null;
+  return L.latLngBounds([south, west], [north, east]);
+}
+
+async function findPostalCodeBounds(postalCode) {
+  const normalized = String(postalCode || "").trim();
+  if (!/^\d{4,6}$/.test(normalized)) {
+    throw new Error("PLZ muss 4 bis 6 Ziffern haben.");
+  }
+
+  const cacheKey = `${POSTAL_CODE_CACHE_KEY_PREFIX}${normalized}`;
+  const cached = _storageGet(cacheKey);
+  const cachedBounds = boundsFromNominatimResult(cached?.result);
+  if (cachedBounds?.isValid?.()) return { bounds: cachedBounds, label: cached.result.display_name };
+
+  const url = new URL(NOMINATIM_API_URL);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("countrycodes", "de");
+  url.searchParams.set("postalcode", normalized);
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("addressdetails", "1");
+
+  const response = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Nominatim HTTP ${response.status}`);
+
+  const results = await response.json();
+  if (!Array.isArray(results) || !results.length) {
+    throw new Error(`Keine Ortsdaten fuer PLZ ${normalized} gefunden.`);
+  }
+
+  const result = results[0];
+  const bounds = boundsFromNominatimResult(result);
+  if (!bounds?.isValid?.()) {
+    throw new Error(`PLZ ${normalized} hat keine gueltige Bounding Box.`);
+  }
+  _storageSet(cacheKey, { v: 1, ts: Date.now(), result });
+  return { bounds, label: result.display_name };
+}
+
+async function selectPostalCodeArea() {
+  const input = document.getElementById("postal-code-input");
+  const postalCode = input?.value || "";
+  try {
+    setStatus("Suche PLZ ...");
+    const { bounds, label } = await findPostalCodeBounds(postalCode);
+    setAreaSelectionBounds(bounds);
+    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
+    setStatus(`PLZ-Bereich gewaehlt: ${label}`);
+  } catch (error) {
+    setStatus(`PLZ-Suche fehlgeschlagen: ${error.message}`, true);
+  }
+}
 
 const select = document.getElementById("line-select");
 if (select) {
@@ -1820,10 +2918,6 @@ if (select) {
   }
   select.value = "U8";
   select.addEventListener("change", () => loadLine(select.value));
-}
-
-if (select?.value) {
-  loadLine(select.value);
 }
 
 async function reloadCurrentFile() {
@@ -1863,7 +2957,7 @@ setStatus("⇣ Overpass oder 📂 Master laden.");
 // ─── Edit-Panel Handler ───────────────────────────────────────────────────────
 
 document.getElementById("btn-edit")?.addEventListener("click", toggleEditMode);
-document.getElementById("btn-overpass")?.addEventListener("click", () => importFromOverpass(select?.value || "U8"));
+document.getElementById("btn-overpass")?.addEventListener("click", () => importCurrentOverpassSelection(select?.value || "U8"));
 
 document.getElementById("edit-len")?.addEventListener("input", (e) => {
   if (!selectedStation) return;
@@ -1898,18 +2992,51 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
   rebuildAndDraw();
 });
 
-document.getElementById("btn-export-ue")?.addEventListener("click", () => exportToUnreal(false));
-document.getElementById("btn-export-ue-all")?.addEventListener("click", () => {
-  exportAllLinesToUnreal().catch((error) => {
-    setStatus(`Alle Linien-Export fehlgeschlagen: ${error.message}`, true);
-  });
-});
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
+document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
+document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
+document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
+document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
+document.getElementById("btn-python-download")?.addEventListener("click", () => {
+  if (latestAreaPythonScript) {
+    downloadTextFile("ue_import_city_street_splines_embedded.py", latestAreaPythonScript, "text/x-python");
+  }
+});
+document.getElementById("python-code-modal")?.addEventListener("click", (event) => {
+  if (event.target?.id === "python-code-modal") closePythonCodeModal();
+});
 document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
+document.getElementById("btn-area-select")?.addEventListener("click", () => {
+  setAreaSelectMode(!areaSelectMode);
+});
+document.getElementById("btn-area-load")?.addEventListener("click", importAreaFromOverpass);
+document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
+document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") selectPostalCodeArea();
+});
+
+map.on("mousedown", beginAreaSelection);
+map.on("mousemove", updateAreaSelection);
+map.on("mouseup", finishAreaSelection);
+
+document.querySelectorAll("[data-area-layer]").forEach((input) => {
+  areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
+  input.addEventListener("change", () => {
+    areaLayerVisibility.set(input.dataset.areaLayer, input.checked);
+    if (areaFeatures.length) {
+      renderAreaFeatures();
+      return;
+    }
+    const selectedLabels = getSelectedAreaCategories().map((category) => AREA_LAYER_LABELS[category]).join(", ");
+    setStatus(selectedLabels ? `Auswahl fuer ersten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
+  });
+});
 
 document.getElementById("btn-fit")?.addEventListener("click", () => {
-  const bounds = routeLayer.getBounds();
+  const bounds = areaProcessedLayer.getBounds().isValid()
+    ? areaProcessedLayer.getBounds()
+    : routeLayer.getBounds();
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [48, 48], maxZoom: 13 });
 });
 

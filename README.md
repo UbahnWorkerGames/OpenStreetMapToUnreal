@@ -27,6 +27,11 @@ Use this folder to import one line into Unreal.
 4. Use `npm run build` if you want a production bundle.
 5. The editor is the place where you edit the line before exporting it into UE.
 
+## City Street Splines
+- City street spline import is documented in `CITY_STREET_IMPORT.md`.
+- Keep generated Python and large Overpass exports out of git.
+- The Unreal test Blueprint for generated city splines is `/Game/_UbahnWorkerGames/TEST/BP_CityTest`.
+
 ## In Unreal
 - Import the generated `*_stations.json` into the station DataTable.
 - Import the generated `*_sections.json` into the section DataTable.

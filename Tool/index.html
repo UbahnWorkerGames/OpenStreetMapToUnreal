@@ -66,12 +66,33 @@
         flex-wrap: wrap;
       }
 
+      .layer-toggles {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 10px;
+        margin-top: 8px;
+      }
+
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .toggle input {
+        margin: 0;
+      }
+
       .row label {
         font-size: 0.85rem;
         color: var(--muted);
       }
 
-      select {
+      select,
+      input[type="search"] {
         font: inherit;
         font-size: 0.95rem;
         padding: 6px 10px;
@@ -219,74 +240,65 @@
         transform: scale(1.5);
       }
 
-      /* ── Stations-Panel (rechts) ── */
-      #station-panel {
-        position: absolute;
-        z-index: 1000;
-        top: 12px;
-        right: 12px;
-        width: 220px;
-        max-height: calc(100vh - 24px);
+      .code-modal {
+        position: fixed;
+        z-index: 2000;
+        inset: 0;
+        display: flex;
+        align-items: stretch;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(15, 23, 42, 0.55);
+      }
+
+      .code-modal[hidden] {
+        display: none;
+      }
+
+      .code-modal-panel {
         display: flex;
         flex-direction: column;
-        border-radius: 10px;
-        background: var(--panel);
-        backdrop-filter: blur(10px);
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+        width: min(1100px, 100%);
+        min-height: 0;
         border: 1px solid var(--border);
-        overflow: hidden;
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
       }
 
-      #station-panel[hidden] { display: none; }
-
-      #station-panel-header {
-        padding: 10px 14px 8px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        border-bottom: 1px solid var(--border);
-        flex-shrink: 0;
-        color: var(--text);
-      }
-
-      #station-list {
-        overflow-y: auto;
-        flex: 1;
-        padding: 4px 0;
-      }
-
-      .stn-item {
+      .code-modal-head,
+      .code-modal-actions {
         display: flex;
         align-items: center;
-        gap: 6px;
-        padding: 4px 10px;
-        cursor: pointer;
-        transition: background 0.1s;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
       }
 
-      .stn-item:hover { background: rgba(0,0,0,0.04); }
-
-      .stn-num {
-        font-size: 0.7rem;
-        color: var(--muted);
-        min-width: 18px;
-        text-align: right;
-        flex-shrink: 0;
+      .code-modal-actions {
+        justify-content: flex-end;
+        border-top: 1px solid var(--border);
+        border-bottom: none;
       }
 
-      .stn-name {
-        font-size: 0.82rem;
-        color: var(--text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+      .code-modal-title {
+        font-size: 0.95rem;
+        font-weight: 600;
       }
 
-      .stn-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: #be185d;
-        flex-shrink: 0;
+      #python-code-output {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        padding: 12px;
+        border: 0;
+        resize: none;
+        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #0f172a;
+        background: #f8fafc;
       }
     </style>
   </head>
@@ -307,21 +319,46 @@
       </div>
       <div class="row" style="margin-top: 6px">
         <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
+        <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Area-JSON speichern">PCG JSON</button>
+        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script fuer Bereichs-Splines speichern">UE Python</button>
         <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
         <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
       </div>
+      <div class="row" style="margin-top: 10px">
+        <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
+        <button type="button" class="btn-clear" id="btn-area-load" title="Straßen und Schienen im Bereich laden">OSM Bereich</button>
+      </div>
       <div class="row" style="margin-top: 6px">
-        <button type="button" class="btn-clear" id="btn-export-ue" title="UE-Rail-JSON speichern">UE Export</button>
-        <button type="button" class="btn-clear" id="btn-export-ue-all" title="Alle Linien als ZIP mit einzelnen UE-JSON-Dateien exportieren">UE ZIP</button>
+        <label for="postal-code-input">PLZ</label>
+        <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" style="width: 6.5rem">
+        <button type="button" class="btn-clear" id="btn-postal-code">Ort</button>
+      </div>
+      <div class="layer-toggles" aria-label="Bereichs-Layer">
+        <label class="toggle"><input type="checkbox" data-area-layer="motorway"> Autobahn</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="major_road"> Hauptstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="city_road"> Stadtstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="service"> Service</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
       </div>
       <p id="direction" hidden></p>
       <p id="status"></p>
     </div>
     <div id="map" role="application" aria-label="Karte Berlin U-Bahn"></div>
 
-    <div id="station-panel" hidden>
-      <div id="station-panel-header"></div>
-      <div id="station-list"></div>
+    <div id="python-code-modal" class="code-modal" hidden>
+      <div class="code-modal-panel" role="dialog" aria-modal="true" aria-labelledby="python-code-title">
+        <div class="code-modal-head">
+          <div id="python-code-title" class="code-modal-title">Unreal Python</div>
+          <button type="button" class="btn-clear" id="btn-python-close">Schliessen</button>
+        </div>
+        <textarea id="python-code-output" spellcheck="false" aria-label="Unreal Python Code"></textarea>
+        <div class="code-modal-actions">
+          <button type="button" class="btn-clear" id="btn-python-copy">Copy</button>
+          <button type="button" class="btn-clear" id="btn-python-download">Download</button>
+        </div>
+      </div>
     </div>
 
     <div id="edit-panel" class="edit-panel" hidden>
