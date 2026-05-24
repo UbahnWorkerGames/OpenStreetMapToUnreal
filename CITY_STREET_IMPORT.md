@@ -1,21 +1,18 @@
 # City Street Spline Import
 
-This document describes the OSM city street spline import workflow for Unreal. It is intentionally separate from the legacy rail route import because the generated street data can become very large and should not be committed.
+This document describes the OSM street spline import workflow for Unreal. Generated street data can become very large and should not be committed.
 
 ## What Belongs In This Repository
 
 Keep source and documentation here:
 
 - `README.md`
-- `ue_import_u8_spline_source.py`
 - `Tool/index.html`
 - `Tool/main.js`
 - `Tool/package.json`
 - `Tool/package-lock.json`
 - `Tool/vite.config.js`
-- line source files such as `U8.json`
-- curated generated DataTable examples in `generated/` when they are meant to be versioned
-- documentation images such as `uemap-web-editor.png`
+- `CITY_STREET_IMPORT.md`
 
 Do not commit local/generated runtime output:
 
@@ -75,11 +72,11 @@ Tunnel
    npm run dev
    ```
 
-2. Draw a map area with `Bereich`.
+2. Draw a map area with `Bereich`, or search an area with `Ort`.
 3. Select only the layers you need.
 4. Click `OSM Bereich`.
 5. Click `UE Python`.
-6. Copy the Python code from the modal.
+6. Review and copy the Python code from the modal.
 
 Large areas are allowed for lighter layers, but `Stadtstrasse` and `Service` should stay small because they produce many segments.
 
@@ -99,15 +96,13 @@ The `UE Python` modal generates executable Python code. Treat it like any other 
 - save or commit your level before running large imports
 - do not paste and execute Python code from unknown sources
 
-The generated script deletes existing actors whose labels start with `CITY_STREET_` before recreating them. That is intentional for repeatable imports, but it means actor labels matter.
-
-The script deletes existing actors whose labels start with:
+The generated script deletes existing actors whose labels start with:
 
 ```text
 CITY_STREET_
 ```
 
-Then it spawns one `BP_CityTest` actor per exported street spline and writes the spline points into the Blueprint's `SplineComponent`.
+Then it recreates one `BP_CityTest` actor per exported street spline and writes the spline points into the Blueprint's `SplineComponent`. That is intentional for repeatable imports, but it means actor labels matter.
 
 ## Expected Result
 

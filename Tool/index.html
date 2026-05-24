@@ -14,10 +14,10 @@
       :root {
         color-scheme: light;
         --bg: #f3f4f6;
-        --panel: rgba(255, 255, 255, 0.94);
+        --panel: rgba(255, 255, 255, 0.95);
         --text: #111827;
         --muted: #6b7280;
-        --border: rgba(0, 0, 0, 0.08);
+        --border: rgba(0, 0, 0, 0.1);
       }
 
       * {
@@ -43,9 +43,9 @@
         z-index: 1000;
         top: 12px;
         left: 12px;
-        max-width: min(320px, calc(100vw - 24px));
+        max-width: min(340px, calc(100vw - 24px));
         padding: 14px 16px;
-        border-radius: 10px;
+        border-radius: 8px;
         background: var(--panel);
         backdrop-filter: blur(10px);
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
@@ -55,22 +55,22 @@
       .panel h1 {
         margin: 0 0 10px;
         font-size: 1.05rem;
-        font-weight: 600;
-        letter-spacing: -0.02em;
+        font-weight: 650;
       }
 
       .row {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
+        margin-top: 8px;
       }
 
       .layer-toggles {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px 10px;
-        margin-top: 8px;
+        margin-top: 10px;
       }
 
       .toggle {
@@ -86,21 +86,15 @@
         margin: 0;
       }
 
-      .row label {
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-
-      select,
       input[type="search"] {
         font: inherit;
-        font-size: 0.95rem;
-        padding: 6px 10px;
+        font-size: 0.9rem;
+        padding: 6px 9px;
         border-radius: 8px;
         border: 1px solid var(--border);
         background: #fff;
         color: var(--text);
-        min-width: 5rem;
+        width: 7rem;
       }
 
       #status {
@@ -125,119 +119,10 @@
         background: #f9fafb;
       }
 
-      .panel a {
-        color: #2563eb;
-        text-decoration: none;
-      }
-
-      .panel a:hover {
-        text-decoration: underline;
-      }
-
-      #direction {
-        margin: 8px 0 0;
-        font-size: 0.8rem;
-        line-height: 1.35;
-        color: var(--text);
-        font-weight: 500;
-      }
-
-      .leaflet-tooltip.station-tip {
-        background: rgba(30, 41, 59, 0.92);
-        color: #f1f5f9;
-        border: none;
-        border-radius: 6px;
-        font-size: 11px;
-        font-weight: 500;
-        padding: 4px 8px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-      }
-
-      .leaflet-tooltip.station-tip::before {
-        border-top-color: rgba(30, 41, 59, 0.92);
-      }
-
       .btn-clear.active {
-        background: #fce7f3;
-        border-color: #f9a8d4;
-        color: #be185d;
-      }
-
-      .edit-panel {
-        position: absolute;
-        z-index: 1000;
-        bottom: 40px;
-        left: 12px;
-        padding: 14px 16px;
-        border-radius: 10px;
-        background: var(--panel);
-        backdrop-filter: blur(10px);
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
-        border: 1px solid var(--border);
-        min-width: 220px;
-      }
-
-      .edit-panel-name {
-        font-size: 0.9rem;
-        font-weight: 600;
-        margin-bottom: 10px;
-        color: var(--text);
-      }
-
-      .edit-fields {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        margin-bottom: 10px;
-      }
-
-      .edit-fields label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-
-      .edit-fields input[type="number"] {
-        width: 72px;
-        font: inherit;
-        font-size: 0.9rem;
-        padding: 4px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: #fff;
-      }
-
-      .edit-handle {
-        width: 18px;
-        height: 18px;
-        border-radius: 50%;
-        background: #be185d;
-        border: 3px solid #fff;
-        cursor: move;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-        transition: transform 0.15s;
-      }
-
-      .edit-handle:hover {
-        transform: scale(1.3);
-      }
-
-      .spline-control {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #3b82f6;
-        border: 2px solid #fff;
-        cursor: move;
-        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
-        transition: transform 0.1s;
-      }
-
-      .spline-control:hover {
-        background: #1d4ed8;
-        transform: scale(1.5);
+        background: #dcfce7;
+        border-color: #86efac;
+        color: #166534;
       }
 
       .code-modal {
@@ -284,7 +169,7 @@
 
       .code-modal-title {
         font-size: 0.95rem;
-        font-weight: 600;
+        font-weight: 650;
       }
 
       #python-code-output {
@@ -306,45 +191,29 @@
     <div class="panel">
       <h1>OSM to Unreal</h1>
       <div class="row">
-        <label for="line-select">Route</label>
-        <select id="line-select" aria-label="Legacy rail route"></select>
-      </div>
-      <div class="row" style="margin-top: 10px">
-        <button type="button" class="btn-clear" id="btn-overpass" title="Aktuelle Linie direkt von Overpass laden">⇣ Overpass</button>
-      </div>
-      <div class="row" style="margin-top: 6px">
-        <button type="button" class="btn-clear" id="btn-edit">✏ Bearbeiten</button>
-        <button type="button" class="btn-clear" id="btn-spline">⟐ Spline</button>
-        <button type="button" class="btn-clear" id="btn-fit" title="Gesamte Route anzeigen">⊕</button>
-      </div>
-      <div class="row" style="margin-top: 6px">
-        <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
-        <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Area-JSON speichern">PCG JSON</button>
-        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script fuer Bereichs-Splines speichern">UE Python</button>
-        <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
-        <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
-      </div>
-      <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
-        <button type="button" class="btn-clear" id="btn-area-load" title="Straßen und Schienen im Bereich laden">OSM Bereich</button>
+        <button type="button" class="btn-clear" id="btn-area-load" title="OSM-Daten im Bereich laden">OSM Bereich</button>
       </div>
-      <div class="row" style="margin-top: 6px">
-        <label for="postal-code-input">PLZ</label>
-        <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" style="width: 6.5rem">
+      <div class="row">
+        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Code anzeigen">UE Python</button>
+        <button type="button" class="btn-clear" id="btn-export-pcg" title="PCG/DataTable-JSON speichern">PCG JSON</button>
+      </div>
+      <div class="row">
+        <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" />
         <button type="button" class="btn-clear" id="btn-postal-code">Ort</button>
       </div>
-      <div class="layer-toggles" aria-label="Bereichs-Layer">
+      <div class="layer-toggles" aria-label="OSM-Layer">
         <label class="toggle"><input type="checkbox" data-area-layer="motorway"> Autobahn</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="major_road"> Hauptstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="major_road" checked> Hauptstrasse</label>
         <label class="toggle"><input type="checkbox" data-area-layer="city_road"> Stadtstrasse</label>
         <label class="toggle"><input type="checkbox" data-area-layer="service"> Service</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway"> Subway</label>
       </div>
-      <p id="direction" hidden></p>
       <p id="status"></p>
     </div>
+
     <div id="map" role="application" aria-label="OSM export map"></div>
 
     <div id="python-code-modal" class="code-modal" hidden>
@@ -359,15 +228,6 @@
           <button type="button" class="btn-clear" id="btn-python-download">Download</button>
         </div>
       </div>
-    </div>
-
-    <div id="edit-panel" class="edit-panel" hidden>
-      <div id="edit-name" class="edit-panel-name"></div>
-      <div class="edit-fields">
-        <label>Länge <input id="edit-len" type="number" step="5" min="10"> m</label>
-        <label>Breite <input id="edit-wid" type="number" step="0.5" min="1"> m</label>
-      </div>
-      <button type="button" class="btn-clear" id="edit-reset">Zurücksetzen</button>
     </div>
 
     <script
