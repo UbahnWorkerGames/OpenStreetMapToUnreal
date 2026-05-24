@@ -53,46 +53,52 @@ lon 13.404954
 
 Exported Unreal coordinates are centimeters from that origin with `X=East`, `Y=North`, and `Z=Up`. Because the origin is fixed, separate exports from different Berlin areas can be imported into the same level and will keep their real distance from each other.
 
-## Actor Tags Written By The Importer
-
-Every spawned city street actor gets these tags:
+For buildings, the Actor transform is the primary placement data:
 
 ```text
-osm.kind=street_spline
-osm.name=<street name or spline key>
-osm.category=<area category>
-osm.width_m=<width in meters>
-osm.spline_key=<export key>
-osm.class=<OSM highway or railway class>
-osm.layer=<OSM layer>
-osm.closed=<true/false>
+Location.X = east offset in cm from Berlin origin
+Location.Y = north offset in cm from Berlin origin
+Location.Z = half building height in cm
+Rotation.Yaw = footprint rotation in degrees
+Scale.X/Y/Z = width/depth/height divided by 100 cm cube size
 ```
 
-Optional tags:
+## Actor Tags Written By The Importer
+
+Every spawned city street actor gets raw value tags in this fixed order:
 
 ```text
-osm.bridge=true
-osm.tunnel=true
+[0] street_spline
+[1] <export spline key>
+[2] <street name or spline key>
+[3] <area category>
+[4] <OSM highway or railway class>
+[5] <width in meters>
+[6] <OSM layer>
+[7] <closed true/false>
+[8] <bridge true/false>
+[9] <tunnel true/false>
 ```
 
 `Breite` comes from OSM `width` when present, otherwise from `lanes * 3.5`, otherwise from a category default.
 
-Every spawned building actor gets these tags:
+Every spawned building actor gets raw value tags in this fixed order:
 
 ```text
-osm.kind=building
-osm.building_key=<export key>
-osm.id=<OSM id>
-osm.name=<name or generated key>
-osm.type=<OSM building value>
-osm.width_cm=<width>
-osm.depth_cm=<depth>
-osm.height_cm=<height>
-osm.yaw_deg=<rotation around Z>
-geo.origin_lat=<fixed export origin latitude>
-geo.origin_lon=<fixed export origin longitude>
-geo.center_lat=<building center latitude>
-geo.center_lon=<building center longitude>
+[0] building
+[1] <export building key>
+[2] <OSM id>
+[3] <name or generated key>
+[4] <OSM building value>
+[5] <X cm from Berlin origin>
+[6] <Y cm from Berlin origin>
+[7] <Z cm>
+[8] <width cm>
+[9] <depth cm>
+[10] <height cm>
+[11] <yaw degrees>
+[12] <building center latitude>
+[13] <building center longitude>
 ```
 
 ## Web Tool Workflow
