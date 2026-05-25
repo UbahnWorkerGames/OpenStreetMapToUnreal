@@ -1051,7 +1051,7 @@ def create_building_actor(actor_class, row):
         float(row["Y"]) + WORLD_OFFSET_CM.y,
         float(row["Z"]) + WORLD_OFFSET_CM.z,
     )
-    rotation = unreal.Rotator(0.0, float(row.get("YawDeg", 0.0)), 0.0)
+    rotation = unreal.Rotator(roll=0.0, pitch=0.0, yaw=float(row.get("YawDeg", 0.0)))
     actor = find_actor_by_label(label) if UPDATE_EXISTING_ACTORS else None
     if actor is None:
         actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, rotation)
