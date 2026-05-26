@@ -3103,6 +3103,172 @@ function initAreaBpPathInputs() {
   }
 }
 
+function buildBlueprintSetupPythonScript(bpPaths) {
+  const pathsLiteral = JSON.stringify(JSON.stringify({
+    ...DEFAULT_AREA_BP_PATHS,
+    ...(bpPaths || {}),
+  }));
+  return `import json
+
+import unreal
+
+
+BP_PATHS = json.loads(${pathsLiteral})
+
+SPLINE_KINDS = {"tunnel", "subway", "tram", "train", "bus", "street"}
+MESH_KINDS = {"building", "tree"}
+KIND_LABELS = {
+    "tunnel": "Tunnel",
+    "subway": "U-Bahn/Gleis",
+    "tram": "Tram",
+    "train": "S-Bahn/Zug",
+    "bus": "Bus",
+    "street": "Strasse",
+    "building": "Gebaeude",
+    "tree": "Baum",
+}
+MESH_BY_KIND = {
+    "building": "/Engine/BasicShapes/Cube.Cube",
+    "tree": "/Engine/BasicShapes/Sphere.Sphere",
+}
+
+
+def fail(message):
+    unreal.log_error(message)
+    raise RuntimeError(message)
+
+
+def log(message):
+    unreal.log(f"[UEMap BP Setup] {message}")
+
+
+def normalize_asset_path(asset_path):
+    if not isinstance(asset_path, str) or not asset_path.startswith("/Game/"):
+        fail(f"Blueprint path must start with /Game/: {asset_path!r}")
+    package_asset = asset_path.split(".")[0]
+    package_path, asset_name = package_asset.rsplit("/", 1)
+    if not package_path or not asset_name:
+        fail(f"Invalid Blueprint path: {asset_path!r}")
+    return package_path, asset_name, f"{package_path}/{asset_name}"
+
+
+def create_actor_blueprint(package_path, asset_name):
+    existing_path = f"{package_path}/{asset_name}"
+    existing_class = unreal.EditorAssetLibrary.load_blueprint_class(existing_path)
+    if existing_class is not None:
+        log(f"Exists: {existing_path}")
+        return unreal.EditorAssetLibrary.load_asset(existing_path), False
+
+    factory = unreal.BlueprintFactory()
+    factory.set_editor_property("parent_class", unreal.Actor)
+    asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+    blueprint = asset_tools.create_asset(asset_name, package_path, unreal.Blueprint, factory)
+    if blueprint is None:
+        fail(f"Could not create Blueprint: {existing_path}")
+    log(f"Created: {existing_path}")
+    return blueprint, True
+
+
+def component_exists_scs(blueprint, component_name):
+    scs = blueprint.get_editor_property("simple_construction_script")
+    for node in scs.get_all_nodes():
+        if str(node.get_variable_name()) == component_name:
+            return True
+    return False
+
+
+def add_component_scs(blueprint, component_class, component_name):
+    scs = blueprint.get_editor_property("simple_construction_script")
+    if component_exists_scs(blueprint, component_name):
+        return None
+    node = scs.create_node(component_class, unreal.Name(component_name))
+    scs.add_node(node)
+    return node.get_editor_property("component_template")
+
+
+def add_component_subobject(blueprint, component_class, component_name):
+    subsystem = unreal.get_engine_subsystem(unreal.SubobjectDataSubsystem)
+    if subsystem is None:
+        fail("SubobjectDataSubsystem is not available in this Unreal version")
+    handles = subsystem.k2_gather_subobject_data_for_blueprint(blueprint)
+    if not handles:
+        fail(f"No subobject root found for {blueprint.get_name()}")
+    params = unreal.AddNewSubobjectParams(
+        parent_handle=handles[0],
+        new_class=component_class,
+        blueprint_context=blueprint,
+    )
+    result = subsystem.add_new_subobject(params)
+    handle = result[0] if isinstance(result, tuple) else result
+    subsystem.rename_subobject(handle, unreal.Text(component_name))
+    data = unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle)
+    return unreal.SubobjectDataBlueprintFunctionLibrary.get_object(data)
+
+
+def add_component(blueprint, component_class, component_name):
+    try:
+        return add_component_scs(blueprint, component_class, component_name)
+    except Exception as scs_error:
+        log(f"SCS add failed for {blueprint.get_name()}.{component_name}: {scs_error}")
+        return add_component_subobject(blueprint, component_class, component_name)
+
+
+def configure_spline_blueprint(blueprint):
+    component = add_component(blueprint, unreal.SplineComponent, "StreetSpline")
+    if component is not None:
+        try:
+            component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
+        except Exception:
+            pass
+
+
+def configure_mesh_blueprint(blueprint, kind):
+    component = add_component(blueprint, unreal.StaticMeshComponent, "PreviewMesh")
+    if component is None:
+        return
+    mesh_path = MESH_BY_KIND.get(kind)
+    mesh = unreal.EditorAssetLibrary.load_asset(mesh_path)
+    if mesh is None:
+        log(f"Mesh not found, leaving PreviewMesh empty: {mesh_path}")
+        return
+    component.set_editor_property("static_mesh", mesh)
+    if kind == "tree":
+        component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.5))
+
+
+def setup_blueprint(kind, asset_path):
+    package_path, asset_name, package_asset = normalize_asset_path(asset_path)
+    blueprint, created = create_actor_blueprint(package_path, asset_name)
+    if blueprint is None:
+        fail(f"Could not load created Blueprint asset: {package_asset}")
+
+    if kind in SPLINE_KINDS:
+        configure_spline_blueprint(blueprint)
+    elif kind in MESH_KINDS:
+        configure_mesh_blueprint(blueprint, kind)
+    else:
+        fail(f"Unknown BP kind: {kind}")
+
+    unreal.KismetEditorUtilities.compile_blueprint(blueprint)
+    unreal.EditorAssetLibrary.save_loaded_asset(blueprint)
+    log(f"Ready: {KIND_LABELS.get(kind, kind)} -> {package_asset}")
+    return created
+
+
+def main():
+    created_count = 0
+    for kind, asset_path in BP_PATHS.items():
+        if kind not in SPLINE_KINDS and kind not in MESH_KINDS:
+            continue
+        created = setup_blueprint(kind, asset_path)
+        created_count += int(bool(created))
+    log(f"Done. Created {created_count} new Blueprint asset(s).")
+
+
+main()
+`;
+}
+
 function encodeTransitLine(line) {
   return `${line.route}:${line.ref}`;
 }
@@ -3493,6 +3659,18 @@ function exportAreaUnrealPython() {
     setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude / ${payload.trees.length} Baeume eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
+function showBlueprintSetupPython() {
+  try {
+    const bpPaths = getAreaBpPathsForExport();
+    for (const [kind, path] of Object.entries(bpPaths)) setStoredAreaBpPath(kind, path);
+    const code = buildBlueprintSetupPythonScript(bpPaths);
+    showPythonCodeModal(code);
+    setStatus("BP-Python-Code erzeugt.");
+  } catch (error) {
+    setStatus(`BP-Python-Code fehlgeschlagen: ${error.message}`, true);
   }
 }
 
@@ -4105,6 +4283,7 @@ document.getElementById("python-code-modal")?.addEventListener("click", (event) 
 });
 document.getElementById("btn-options")?.addEventListener("click", openOptionsModal);
 document.getElementById("btn-options-close")?.addEventListener("click", closeOptionsModal);
+document.getElementById("btn-generate-bp-python")?.addEventListener("click", showBlueprintSetupPython);
 document.getElementById("options-modal")?.addEventListener("click", (event) => {
   if (event.target?.id === "options-modal") closeOptionsModal();
 });

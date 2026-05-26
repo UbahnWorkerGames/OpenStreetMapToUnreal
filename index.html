@@ -360,7 +360,8 @@
         border-bottom: 1px solid var(--border);
       }
 
-      .code-modal-actions {
+      .code-modal-actions,
+      .options-modal-actions {
         justify-content: flex-end;
         border-top: 1px solid var(--border);
         border-bottom: none;
@@ -476,6 +477,9 @@
           <div class="path-field">
             <label for="tree-bp-path-input">Baum BP</label>
             <input id="tree-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="options-modal-actions">
+            <button type="button" class="btn-clear" id="btn-generate-bp-python">BP Python</button>
           </div>
         </div>
       </div>
