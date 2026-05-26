@@ -3384,7 +3384,28 @@ function loadLine(ref, routeMode = currentRouteMode || "subway") {
   return;
 }
 
-function buildOverpassQuery(ref, routeMode = "subway") {
+function overpassBbox(bounds) {
+  if (!bounds?.isValid?.()) return null;
+  return [
+    bounds.getSouth().toFixed(7),
+    bounds.getWest().toFixed(7),
+    bounds.getNorth().toFixed(7),
+    bounds.getEast().toFixed(7),
+  ].join(",");
+}
+
+function buildOverpassQuery(ref, routeMode = "subway", bounds = null) {
+  const bbox = overpassBbox(bounds);
+  if (bbox) {
+    return `[out:json][timeout:360];
+(
+  relation["type"="route"]["route"="${routeMode}"]["ref"="${ref}"](${bbox});
+);
+out body;
+>;
+out geom;`;
+  }
+
   return `[out:json][timeout:360];
 area["name"="Berlin"]["boundary"="administrative"]->.searchArea;
 (
@@ -3395,16 +3416,17 @@ out body;
 out geom;`;
 }
 
-async function importFromOverpass(ref, routeMode = "subway") {
+async function importFromOverpass(ref, routeMode = "subway", bounds = areaSelectionBounds) {
   try {
     const modeLabel = TRANSIT_ROUTE_MODES[routeMode]?.label || routeMode;
-    setStatus(`Lade ${modeLabel} ${ref} direkt von Overpass …`);
+    const scopedToArea = bounds?.isValid?.();
+    setStatus(`Lade ${modeLabel} ${ref} ${scopedToArea ? "aus dem Bereich" : "direkt"} von Overpass …`);
     setDirectionText("");
 
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildOverpassQuery(ref, routeMode),
+      body: buildOverpassQuery(ref, routeMode, scopedToArea ? bounds : null),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -3423,7 +3445,7 @@ async function importFromOverpass(ref, routeMode = "subway") {
     masterStations = null;
     lastRelation = null;
     loadLine(ref, routeMode);
-    return true;
+    return lastLoadData?.ref === ref && lastLoadData?.routeMode === routeMode && Boolean(masterStations?.length);
   } catch (error) {
     setStatus(`Overpass-Direktimport fehlgeschlagen: ${error.message}`, true);
     return false;
