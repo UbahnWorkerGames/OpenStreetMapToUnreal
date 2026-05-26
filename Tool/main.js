@@ -3248,6 +3248,8 @@ def add_component_subobject(blueprint, component_class, component_name):
     handle = result[0] if isinstance(result, tuple) else result
     subsystem.rename_subobject(handle, unreal.Text(component_name))
     data = unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle)
+    if hasattr(unreal.SubobjectDataBlueprintFunctionLibrary, "get_associated_object"):
+        return unreal.SubobjectDataBlueprintFunctionLibrary.get_associated_object(data)
     return unreal.SubobjectDataBlueprintFunctionLibrary.get_object(data)
 
 
@@ -3282,6 +3284,16 @@ def configure_mesh_blueprint(blueprint, kind):
         component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.5))
 
 
+def compile_blueprint_if_available(blueprint):
+    if hasattr(unreal, "KismetEditorUtilities"):
+        unreal.KismetEditorUtilities.compile_blueprint(blueprint)
+        return
+    if hasattr(unreal, "BlueprintEditorLibrary"):
+        unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+        return
+    log(f"Compile API not available, saving without explicit compile: {blueprint.get_name()}")
+
+
 def setup_blueprint(kind, asset_path):
     package_path, asset_name, package_asset = normalize_asset_path(asset_path)
     blueprint, created = create_actor_blueprint(package_path, asset_name)
@@ -3295,7 +3307,7 @@ def setup_blueprint(kind, asset_path):
     else:
         fail(f"Unknown BP kind: {kind}")
 
-    unreal.KismetEditorUtilities.compile_blueprint(blueprint)
+    compile_blueprint_if_available(blueprint)
     unreal.EditorAssetLibrary.save_loaded_asset(blueprint)
     log(f"Ready: {KIND_LABELS.get(kind, kind)} -> {package_asset}")
     return created
