@@ -1,3 +1,5 @@
+import JSZip from "jszip";
+
 /**
  * Berlin U-Bahn
  * - Track: Way-Geometrie (role "") aus der Route-Relation, lückenlos zusammengesetzt
@@ -1478,6 +1480,7 @@ function _renderFromMasterStations(rawTrack, ref, fitView) {
 
   if (editModeActive) renderEditMarkers(stationsOrdered);
 
+  populateSegmentSelects(stationsOrdered);
   scheduleCachePersist(ref);
   setStatus(`Linie ${ref} · ${stationsOrdered.length} Stationen`);
 }
@@ -2401,6 +2404,163 @@ function downloadTextFile(filename, content, type = "text/plain") {
   URL.revokeObjectURL(a.href);
 }
 
+function stationExportKey(name) {
+  return normalizeAreaKey(name).replace(/_+/g, "_").replace(/^_+|_+$/g, "") || "Station";
+}
+
+function datatableNumber(value) {
+  return +Number(value || 0).toFixed(2);
+}
+
+function getSegmentSelectionForCurrentLine() {
+  const from = document.getElementById("segment-from")?.value || "";
+  const to = document.getElementById("segment-to")?.value || "";
+  if (!from || !to || from === "__full__" || to === "__full__") return null;
+  return { from, to };
+}
+
+function populateSegmentSelects(stations) {
+  const fromSelect = document.getElementById("segment-from");
+  const toSelect = document.getElementById("segment-to");
+  if (!fromSelect || !toSelect) return;
+
+  const currentFrom = fromSelect.value;
+  const currentTo = toSelect.value;
+  for (const target of [fromSelect, toSelect]) {
+    target.textContent = "";
+    const full = document.createElement("option");
+    full.value = "__full__";
+    full.textContent = "ganze Linie";
+    target.appendChild(full);
+    for (const station of stations || []) {
+      const option = document.createElement("option");
+      option.value = station.name;
+      option.textContent = station.name;
+      target.appendChild(option);
+    }
+  }
+
+  fromSelect.value = [...fromSelect.options].some((option) => option.value === currentFrom) ? currentFrom : "__full__";
+  toSelect.value = [...toSelect.options].some((option) => option.value === currentTo) ? currentTo : "__full__";
+}
+
+function buildDatatablePayloads(uePayload, segmentSelection = null) {
+  const allStations = [...(uePayload?.stations || [])].sort((a, b) => a.dist_m - b.dist_m);
+  if (!allStations.length) throw new Error(`${uePayload?.ref || "Linie"} hat keine Stationsdaten.`);
+
+  let firstIndex = 0;
+  let lastIndex = allStations.length - 1;
+  if (segmentSelection?.from && segmentSelection?.to) {
+    const fromIndex = allStations.findIndex((station) => station.name === segmentSelection.from);
+    const toIndex = allStations.findIndex((station) => station.name === segmentSelection.to);
+    if (fromIndex < 0 || toIndex < 0) {
+      throw new Error(`Teilbereich ${segmentSelection.from} bis ${segmentSelection.to} nicht in ${uePayload.ref} gefunden.`);
+    }
+    firstIndex = Math.min(fromIndex, toIndex);
+    lastIndex = Math.max(fromIndex, toIndex);
+  }
+
+  const selectedStations = allStations.slice(firstIndex, lastIndex + 1);
+  const routeLength = Number(uePayload?.route?.total_length_m || 0);
+  const segmentStartM = Math.max(0, Number(selectedStations[0].platform_start_m ?? selectedStations[0].dist_m));
+  const segmentEndM = Math.min(
+    routeLength || Number(selectedStations[selectedStations.length - 1].platform_end_m ?? selectedStations[selectedStations.length - 1].dist_m),
+    Number(selectedStations[selectedStations.length - 1].platform_end_m ?? selectedStations[selectedStations.length - 1].dist_m),
+  );
+
+  const stations = selectedStations.map((station) => ({
+    name: station.name,
+    key: stationExportKey(station.name),
+    dist_m: datatableNumber(station.dist_m - segmentStartM),
+  }));
+
+  const sections = [];
+  let tunnelIndex = 1;
+  for (const section of uePayload.sections || []) {
+    const fromM = Math.max(Number(section.from_m), segmentStartM);
+    const toM = Math.min(Number(section.to_m), segmentEndM);
+    if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) continue;
+
+    if (section.type === "platform") {
+      const stationKey = stationExportKey(section.station);
+      sections.push({
+        Name: `platform_${stationKey}`,
+        UB_SectionType: "platform",
+        UB_StationKey: stationKey,
+        UB_FromM: datatableNumber(fromM - segmentStartM),
+        UB_ToM: datatableNumber(toM - segmentStartM),
+        UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
+      });
+      continue;
+    }
+
+    sections.push({
+      Name: `tunnel_${String(tunnelIndex++).padStart(3, "0")}`,
+      UB_SectionType: "tunnel",
+      UB_StationKey: "",
+      UB_FromM: datatableNumber(fromM - segmentStartM),
+      UB_ToM: datatableNumber(toM - segmentStartM),
+      UB_CenterM: 0,
+    });
+  }
+
+  const fromKey = stationExportKey(selectedStations[0].name);
+  const toKey = stationExportKey(selectedStations[selectedStations.length - 1].name);
+  const suffix = segmentSelection ? `_${fromKey}_to_${toKey}` : "";
+  return { stations, sections, suffix };
+}
+
+async function ensureLineLoadedForDatatableExport(ref) {
+  if (lastLoadData?.ref === ref && masterStations?.length) return;
+  if (loadCachedMasterForRef(ref)) return;
+  if (uploadedJsonData || loadCachedOverpassDataset()) {
+    loadLine(ref);
+    if (lastLoadData?.ref === ref && masterStations?.length) return;
+  }
+  const imported = await importFromOverpass(ref);
+  if (!imported || lastLoadData?.ref !== ref || !masterStations?.length) {
+    throw new Error(`${ref} konnte nicht fuer den Datatable-Export geladen werden.`);
+  }
+}
+
+async function exportDatatableZip() {
+  const checked = [...document.querySelectorAll("[data-datatable-line]:checked")].map((input) => input.value);
+  if (!checked.length) {
+    setStatus("Mindestens eine Linie fuer den Datatable-Export anhaken.", true);
+    return;
+  }
+
+  const originalRef = select?.value || lastLoadData?.ref || checked[0];
+  const segmentSelection = getSegmentSelectionForCurrentLine();
+  const zip = new JSZip();
+
+  try {
+    setStatus(`Erzeuge Datatable-ZIP fuer ${checked.join(", ")} ...`);
+    for (const ref of checked) {
+      await ensureLineLoadedForDatatableExport(ref);
+      const uePayload = exportToUnreal(true);
+      if (!uePayload) throw new Error(`${ref} hat keinen UE-Payload.`);
+      const appliedSegment = ref === originalRef ? segmentSelection : null;
+      const { stations, sections, suffix } = buildDatatablePayloads(uePayload, appliedSegment);
+      const folderName = `${ref}${suffix}`;
+      const folder = zip.folder(folderName);
+      folder.file(`${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
+      folder.file(`${ref}${suffix}_sections.json`, JSON.stringify(sections, null, "\t"));
+    }
+
+    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    const suffix = checked.length === 1 ? checked[0] : "selection";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `ubahn-datatables-${suffix}.zip`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`Datatable-ZIP exportiert: ${checked.length} Linie(n), je stations + sections.`);
+  } catch (error) {
+    setStatus(`Datatable-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 function showPythonCodeModal(code) {
   latestAreaPythonScript = code;
   const modal = document.getElementById("python-code-modal");
@@ -2920,6 +3080,22 @@ if (select) {
   select.addEventListener("change", () => loadLine(select.value));
 }
 
+const datatableLineSelect = document.getElementById("datatable-line-select");
+if (datatableLineSelect) {
+  for (const line of LINES) {
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = line;
+    input.dataset.datatableLine = line;
+    input.checked = line === "U8";
+    label.append(input, document.createTextNode(` ${line}`));
+    datatableLineSelect.appendChild(label);
+  }
+}
+populateSegmentSelects([]);
+
 async function reloadCurrentFile() {
   const sourceFile = currentSourceFile;
   if (!sourceFile) {
@@ -2993,6 +3169,7 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 });
 
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
+document.getElementById("btn-export-datatables")?.addEventListener("click", exportDatatableZip);
 document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
 document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);

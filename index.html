@@ -73,6 +73,23 @@
         margin-top: 8px;
       }
 
+      .export-box {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+
+      .export-lines {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 5px 8px;
+        margin-top: 6px;
+      }
+
+      .export-lines .toggle {
+        font-size: 0.76rem;
+      }
+
       .toggle {
         display: flex;
         align-items: center;
@@ -101,6 +118,13 @@
         background: #fff;
         color: var(--text);
         min-width: 5rem;
+      }
+
+      .range-select {
+        min-width: 0;
+        width: 7.4rem;
+        font-size: 0.78rem;
+        padding: 5px 7px;
       }
 
       #status {
@@ -319,10 +343,23 @@
       </div>
       <div class="row" style="margin-top: 6px">
         <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
+        <button type="button" class="btn-clear" id="btn-export-datatables" title="UE-Datatables als ZIP exportieren">DT ZIP</button>
         <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Area-JSON speichern">PCG JSON</button>
         <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script fuer Bereichs-Splines speichern">UE Python</button>
         <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
         <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
+      </div>
+      <div class="export-box">
+        <div class="row">
+          <label>Export-Linien</label>
+        </div>
+        <div id="datatable-line-select" class="export-lines" aria-label="Datatable Export Linien"></div>
+        <div class="row" style="margin-top: 8px">
+          <label for="segment-from">Teil</label>
+          <select id="segment-from" class="range-select" aria-label="Teilbereich Start"></select>
+          <span aria-hidden="true">bis</span>
+          <select id="segment-to" class="range-select" aria-label="Teilbereich Ende"></select>
+        </div>
       </div>
       <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
