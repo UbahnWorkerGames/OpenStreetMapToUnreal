@@ -2157,6 +2157,7 @@ function exportToUnreal(buildOnly = false) {
       level: s.level ?? null,
       height_m: +(s.heightM || 0).toFixed(2),
       height_source: s.heightSource || "",
+      wgs84: [+s.point[0].toFixed(7), +s.point[1].toFixed(7)],
       location_cm: toUEcm(s.point[0], s.point[1], s.heightM || 0),
     })),
     sections,
@@ -3205,23 +3206,80 @@ function syncDatatableLineAllCheckbox() {
   allCheckbox.indeterminate = inputs.some((input) => input.checked) && !allCheckbox.checked;
 }
 
-function buildAreaRouteSegment(uePayload, bounds = areaSelectionBounds) {
-  if (!bounds?.isValid?.()) return null;
-  const points = uePayload?.route?.points || [];
-  const inside = points.filter((point) => {
-    const [lat, lon] = point.wgs84 || [];
-    return Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains(L.latLng(lat, lon));
-  });
-  if (!inside.length) return null;
+function clipRouteSegmentToBounds(a, b, bounds) {
+  const lat0 = a.lat;
+  const lon0 = a.lon;
+  const lat1 = b.lat;
+  const lon1 = b.lon;
+  const dLat = lat1 - lat0;
+  const dLon = lon1 - lon0;
+  let t0 = 0;
+  let t1 = 1;
 
-  const fromM = Math.min(...inside.map((point) => Number(point.dist_m)).filter(Number.isFinite));
-  const toM = Math.max(...inside.map((point) => Number(point.dist_m)).filter(Number.isFinite));
-  if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) return null;
-  return {
-    fromM,
-    toM,
-    suffix: "_area",
-  };
+  function clip(p, q) {
+    if (Math.abs(p) < 1e-12) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  }
+
+  if (!clip(-dLon, lon0 - bounds.getWest())) return null;
+  if (!clip(dLon, bounds.getEast() - lon0)) return null;
+  if (!clip(-dLat, lat0 - bounds.getSouth())) return null;
+  if (!clip(dLat, bounds.getNorth() - lat0)) return null;
+  if (t1 < t0) return null;
+
+  const fromM = a.dist + (b.dist - a.dist) * t0;
+  const toM = a.dist + (b.dist - a.dist) * t1;
+  return toM > fromM ? { fromM, toM } : null;
+}
+
+function buildAreaRouteSegments(uePayload, bounds = areaSelectionBounds) {
+  if (!bounds?.isValid?.()) return [];
+  const routePoints = (uePayload?.route?.points || [])
+    .map((point) => {
+      const [lat, lon] = point.wgs84 || [];
+      const dist = Number(point.dist_m);
+      return Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(dist)
+        ? { lat, lon, dist }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.dist - b.dist);
+  if (routePoints.length < 2) return [];
+
+  const intervals = [];
+  for (let index = 0; index < routePoints.length - 1; index += 1) {
+    const interval = clipRouteSegmentToBounds(routePoints[index], routePoints[index + 1], bounds);
+    if (!interval) continue;
+    const previous = intervals.at(-1);
+    if (previous && interval.fromM <= previous.toM + 2) {
+      previous.toM = Math.max(previous.toM, interval.toM);
+    } else {
+      intervals.push(interval);
+    }
+  }
+
+  return intervals
+    .filter((interval) => interval.toM - interval.fromM > 1)
+    .map((interval, index, all) => ({
+      fromM: interval.fromM,
+      toM: interval.toM,
+      bounds,
+      suffix: all.length > 1 ? `_area_${String(index + 1).padStart(2, "0")}` : "_area",
+    }));
+}
+
+function stationInBounds(station, bounds) {
+  if (!bounds?.isValid?.()) return false;
+  const [lat, lon] = station.wgs84 || [];
+  return Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains(L.latLng(lat, lon));
 }
 
 function buildDatatablePayloads(uePayload, segmentRange = null) {
@@ -3245,7 +3303,10 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
   const selectedStations = allStations.filter((station) => {
     const start = Number(station.platform_start_m ?? station.dist_m);
     const end = Number(station.platform_end_m ?? station.dist_m);
-    return end >= segmentStartM && start <= segmentEndM;
+    const stationDist = Number(station.dist_m);
+    const overlapsSegment = end >= segmentStartM && start <= segmentEndM;
+    const stopInSelection = segmentRange?.bounds && stationInBounds(station, segmentRange.bounds);
+    return overlapsSegment || (stopInSelection && stationDist >= segmentStartM - 150 && stationDist <= segmentEndM + 150);
   });
 
   const stations = selectedStations.map((station) => ({
@@ -3338,13 +3399,15 @@ async function exportDatatableZip() {
       await ensureLineLoadedForDatatableExport(line);
       const uePayload = exportToUnreal(true);
       if (!uePayload) throw new Error(`${transitLineLabel(line)} hat keinen UE-Payload.`);
-      const areaSegment = buildAreaRouteSegment(uePayload);
-      if (!areaSegment) throw new Error(`${transitLineLabel(line)} verlaeuft nicht durch den aktuell markierten Bereich.`);
-      const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment);
-      const folderName = `${line.route}_${ref}${suffix}`;
-      const folder = zip.folder(folderName);
-      folder.file(`${line.route}_${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
-      folder.file(`${line.route}_${ref}${suffix}_sections.json`, JSON.stringify(sections, null, "\t"));
+      const areaSegments = buildAreaRouteSegments(uePayload);
+      if (!areaSegments.length) throw new Error(`${transitLineLabel(line)} verlaeuft nicht durch den aktuell markierten Bereich.`);
+      for (const areaSegment of areaSegments) {
+        const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment);
+        const folderName = `${line.route}_${ref}${suffix}`;
+        const folder = zip.folder(folderName);
+        folder.file(`${line.route}_${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
+        folder.file(`${line.route}_${ref}${suffix}_sections.json`, JSON.stringify(sections, null, "\t"));
+      }
     }
 
     const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
