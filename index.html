@@ -97,6 +97,30 @@
         color: var(--muted);
       }
 
+      .path-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 8px;
+      }
+
+      .path-field label {
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .path-field input {
+        width: 100%;
+        min-width: 0;
+        font: inherit;
+        font-size: 0.78rem;
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+      }
+
       select,
       input[type="search"] {
         font: inherit;
@@ -331,6 +355,30 @@
             <option value="">erst Bereich laden</option>
           </select>
         </div>
+        <div class="path-field">
+          <label for="tunnel-bp-path-input">Tunnel BP</label>
+          <input id="tunnel-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="path-field">
+          <label for="subway-bp-path-input">U-Bahn/Gleis BP</label>
+          <input id="subway-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="path-field">
+          <label for="tram-bp-path-input">Tram BP</label>
+          <input id="tram-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="path-field">
+          <label for="train-bp-path-input">S-Bahn/Zug BP</label>
+          <input id="train-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="path-field">
+          <label for="street-bp-path-input">Straße BP</label>
+          <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="path-field">
+          <label for="building-bp-path-input">Gebäude BP</label>
+          <input id="building-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+        </div>
       </div>
       <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
@@ -349,6 +397,7 @@
         <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="building"> Gebäude</label>
       </div>
       <p id="direction" hidden></p>
       <p id="status"></p>

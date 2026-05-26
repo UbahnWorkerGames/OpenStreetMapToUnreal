@@ -65,6 +65,15 @@ const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
+const DEFAULT_AREA_BP_PATHS = {
+  tunnel: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  subway: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  tram: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  train: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  street: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  building: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
+};
+const AREA_BP_STORAGE_KEY_PREFIX = "ubahn.areaBpPath.";
 let persistCacheTimer = null;
 
 const LINE_STYLE = {
@@ -93,6 +102,7 @@ const AREA_STYLE = {
   rail_tram: { color: "#16a34a", weight: 3 },
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
+  building: { color: "#64748b", weight: 1.2 },
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
@@ -103,7 +113,8 @@ const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
-const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service"]);
+const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service", "building"]);
+const DEFAULT_BUILDING_HEIGHT_CM = 300;
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -113,6 +124,7 @@ const AREA_LAYER_LABELS = {
   rail_tram: "Tram",
   rail_train: "Zug",
   rail_subway: "U-Bahn",
+  building: "Gebaeude",
 };
 
 const areaLayerVisibility = new Map(
@@ -958,6 +970,7 @@ function normalizeAreaKey(sourceValue) {
 }
 
 function classifyAreaWay(tags = {}) {
+  if (tags.building && tags.building !== "no") return "building";
   const highway = tags.highway;
   if (highway) {
     if (["motorway", "motorway_link", "trunk", "trunk_link"].includes(highway)) return "motorway";
@@ -991,6 +1004,8 @@ function areaOverpassFilterForCategory(category) {
       return 'way["railway"~"^(rail|light_rail)$"]';
     case "rail_subway":
       return 'way["railway"="subway"]';
+    case "building":
+      return 'way["building"]';
     default:
       return null;
   }
@@ -1968,6 +1983,14 @@ function areaTagFloat(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function buildingHeightCm(tags = {}) {
+  const heightM = areaTagFloat(tags.height);
+  if (heightM != null && heightM > 0) return heightM * 100;
+  const levels = areaTagFloat(tags["building:levels"]);
+  if (levels != null && levels > 0) return levels * 300;
+  return DEFAULT_BUILDING_HEIGHT_CM;
+}
+
 function areaFeatureWidthM(feature) {
   const explicitWidth = areaTagFloat(feature.tags.width);
   if (explicitWidth != null) return explicitWidth;
@@ -1988,6 +2011,8 @@ function areaFeatureWidthM(feature) {
     case "rail_train":
     case "rail_subway":
       return 4;
+    case "building":
+      return 1;
     default:
       return 5;
   }
@@ -2082,6 +2107,133 @@ function buildAreaPythonSplineData() {
       Points: feature.controlGeometry.map(toPointCm),
     };
   });
+}
+
+function pointBounds(points) {
+  const lats = points.map((point) => point[0]);
+  const lons = points.map((point) => point[1]);
+  return {
+    south: Math.min(...lats),
+    north: Math.max(...lats),
+    west: Math.min(...lons),
+    east: Math.max(...lons),
+  };
+}
+
+function normalizeDegrees(degrees) {
+  let normalized = degrees;
+  while (normalized <= -180) normalized += 360;
+  while (normalized > 180) normalized -= 360;
+  return +normalized.toFixed(3);
+}
+
+function buildAreaExportTransform(selected) {
+  const origin = selected.find((feature) => feature.controlGeometry?.length)?.controlGeometry[0];
+  if (!origin) return null;
+  const [lat0, lon0] = origin;
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  return {
+    originWgs84: { lat: lat0, lon: lon0 },
+    toPointCm([lat, lon]) {
+      return {
+        X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
+        Y: +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+        Z: 0,
+      };
+    },
+  };
+}
+
+function buildingFootprintMetrics(feature, transform) {
+  const points = feature.controlGeometry.map((point) => transform.toPointCm(point));
+  const openPoints = points.length > 1 && points[0].X === points.at(-1).X && points[0].Y === points.at(-1).Y
+    ? points.slice(0, -1)
+    : points;
+  if (openPoints.length < 3) return null;
+
+  let longestEdge = null;
+  for (let index = 0; index < openPoints.length; index += 1) {
+    const a = openPoints[index];
+    const b = openPoints[(index + 1) % openPoints.length];
+    const dx = b.X - a.X;
+    const dy = b.Y - a.Y;
+    const lengthSq = dx * dx + dy * dy;
+    if (!longestEdge || lengthSq > longestEdge.lengthSq) longestEdge = { dx, dy, lengthSq };
+  }
+  if (!longestEdge || longestEdge.lengthSq <= 0) return null;
+
+  const yawRad = Math.atan2(longestEdge.dy, longestEdge.dx);
+  const axisX = { x: Math.cos(yawRad), y: Math.sin(yawRad) };
+  const axisY = { x: -axisX.y, y: axisX.x };
+  const projected = openPoints.map((point) => ({
+    u: point.X * axisX.x + point.Y * axisX.y,
+    v: point.X * axisY.x + point.Y * axisY.y,
+  }));
+  const minU = Math.min(...projected.map((point) => point.u));
+  const maxU = Math.max(...projected.map((point) => point.u));
+  const minV = Math.min(...projected.map((point) => point.v));
+  const maxV = Math.max(...projected.map((point) => point.v));
+  const centerU = (minU + maxU) * 0.5;
+  const centerV = (minV + maxV) * 0.5;
+
+  return {
+    center: {
+      X: +(centerU * axisX.x + centerV * axisY.x).toFixed(1),
+      Y: +(centerU * axisX.y + centerV * axisY.y).toFixed(1),
+      Z: 0,
+    },
+    widthCm: +Math.max(100, maxU - minU).toFixed(1),
+    depthCm: +Math.max(100, maxV - minV).toFixed(1),
+    yawDeg: normalizeDegrees((yawRad * 180) / Math.PI),
+    footprintCm: openPoints.map((point) => ({ X: point.X, Y: point.Y, Z: point.Z })),
+  };
+}
+
+function buildBuildingData(selected, transform) {
+  return selected
+    .filter((feature) => feature.category === "building" && feature.controlGeometry.length >= 3)
+    .map((feature) => {
+      const bounds = pointBounds(feature.controlGeometry);
+      const metrics = buildingFootprintMetrics(feature, transform);
+      if (!metrics) return null;
+      const heightCm = +buildingHeightCm(feature.tags).toFixed(1);
+      return {
+        BuildingKey: feature.key,
+        OsmId: feature.id,
+        Name: feature.name || feature.key,
+        Type: feature.tags.building || "building",
+        FootprintCm: metrics.footprintCm,
+        WidthCm: metrics.widthCm,
+        DepthCm: metrics.depthCm,
+        HeightCm: Math.max(100, heightCm),
+        YawDeg: metrics.yawDeg,
+        X: metrics.center.X,
+        Y: metrics.center.Y,
+        Z: heightCm * 0.5,
+        CenterWgs84: {
+          lat: +(((bounds.south + bounds.north) * 0.5).toFixed(7)),
+          lon: +(((bounds.west + bounds.east) * 0.5).toFixed(7)),
+        },
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildAreaPythonExportPayload() {
+  const selected = areaFeatures.filter(
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+  );
+  if (!selected.length) return null;
+  const transform = buildAreaExportTransform(selected);
+  if (!transform) return null;
+
+  const splines = buildAreaPythonSplineData() || [];
+  return {
+    origin_wgs84: transform.originWgs84,
+    splines: splines.filter((row) => row.Type !== "building"),
+    buildings: buildBuildingData(selected, transform),
+  };
 }
 
 function exportAreaPcgSplines() {
@@ -2327,8 +2479,15 @@ main()
 `;
 }
 
-function buildCompactAreaUnrealPythonScript(splines) {
+function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
+  const splines = Array.isArray(payload) ? payload : (payload?.splines || []);
+  const buildings = Array.isArray(payload) ? [] : (payload?.buildings || []);
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
+  const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
+  const bpPathsLiteral = JSON.stringify(JSON.stringify({
+    ...DEFAULT_AREA_BP_PATHS,
+    ...(bpPaths || {}),
+  }));
   return `import json
 import re
 
@@ -2336,12 +2495,15 @@ import unreal
 
 
 STREET_SPLINES = json.loads(${jsonLiteral})
-STREET_BP_PATH = "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest"
+BUILDINGS = json.loads(${buildingJsonLiteral})
+BP_PATHS = json.loads(${bpPathsLiteral})
 ACTOR_LABEL_PREFIX = "CITY_STREET"
+BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
 LINEAR_SPLINES = True
+CUBE_BASE_CM = 100.0
 
 
 def fail(message):
@@ -2360,6 +2522,29 @@ def load_bp_class(asset_path):
     if asset_class is None:
         fail(f"Could not load Blueprint class: {asset_path}")
     return asset_class
+
+
+def bp_kind_for_row(row):
+    if bool(row.get("bTunnel", False)):
+        return "tunnel"
+    row_type = str(row.get("Type", ""))
+    if row_type == "rail_subway":
+        return "subway"
+    if row_type == "rail_tram":
+        return "tram"
+    if row_type == "rail_train":
+        return "train"
+    return "street"
+
+
+def bp_class_for_row(row, cache):
+    kind = bp_kind_for_row(row)
+    asset_path = BP_PATHS.get(kind) or BP_PATHS.get("street")
+    if not isinstance(asset_path, str) or not asset_path.strip():
+        fail(f"No Blueprint path configured for kind '{kind}'")
+    if asset_path not in cache:
+        cache[asset_path] = load_bp_class(asset_path)
+    return cache[asset_path]
 
 
 def sanitize_label_part(value):
@@ -2461,15 +2646,49 @@ def create_street_spline_actor(actor_class, row):
     return actor
 
 
+def create_building_actor(actor_class, row):
+    label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('BuildingKey', row.get('Name', 'Building')))}"
+    location = unreal.Vector(
+        float(row["X"]) + WORLD_OFFSET_CM.x,
+        float(row["Y"]) + WORLD_OFFSET_CM.y,
+        float(row["Z"]) + WORLD_OFFSET_CM.z,
+    )
+    rotation = unreal.Rotator(roll=0.0, pitch=0.0, yaw=float(row.get("YawDeg", 0.0)))
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, rotation)
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    actor.set_actor_scale3d(
+        unreal.Vector(
+            max(0.01, float(row["WidthCm"]) / CUBE_BASE_CM),
+            max(0.01, float(row["DepthCm"]) / CUBE_BASE_CM),
+            max(0.01, float(row["HeightCm"]) / CUBE_BASE_CM),
+        )
+    )
+    actor.tags = [
+        unreal.Name("building"),
+        unreal.Name(str(row.get("BuildingKey", ""))),
+        unreal.Name(str(row.get("OsmId", ""))),
+        unreal.Name(str(row.get("Name", ""))),
+        unreal.Name(str(row.get("Type", ""))),
+    ]
+    return actor
+
+
 def main():
-    actor_class = load_bp_class(STREET_BP_PATH)
+    bp_class_cache = {}
     destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
+    destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
         point_count += len(row["Points"])
+        actor_class = bp_class_for_row(row, bp_class_cache)
         create_street_spline_actor(actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points")
+    building_actor_class = load_bp_class(BP_PATHS["building"]) if BUILDINGS else None
+    for row in BUILDINGS:
+        create_building_actor(building_actor_class, row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points and {len(BUILDINGS)} buildings")
 
 
 main()
@@ -2493,6 +2712,37 @@ function stationExportKey(name) {
 
 function datatableNumber(value) {
   return +Number(value || 0).toFixed(2);
+}
+
+function getStoredAreaBpPath(kind) {
+  const fallback = DEFAULT_AREA_BP_PATHS[kind] || DEFAULT_AREA_BP_PATHS.street;
+  const stored = window.localStorage.getItem(`${AREA_BP_STORAGE_KEY_PREFIX}${kind}`);
+  return stored?.trim() || fallback;
+}
+
+function setStoredAreaBpPath(kind, value) {
+  const fallback = DEFAULT_AREA_BP_PATHS[kind] || DEFAULT_AREA_BP_PATHS.street;
+  const normalized = String(value || "").trim();
+  window.localStorage.setItem(`${AREA_BP_STORAGE_KEY_PREFIX}${kind}`, normalized || fallback);
+}
+
+function getAreaBpPathsForExport() {
+  const paths = {};
+  for (const kind of Object.keys(DEFAULT_AREA_BP_PATHS)) {
+    const input = document.getElementById(`${kind}-bp-path-input`);
+    paths[kind] = input?.value?.trim() || getStoredAreaBpPath(kind);
+  }
+  return paths;
+}
+
+function initAreaBpPathInputs() {
+  for (const kind of Object.keys(DEFAULT_AREA_BP_PATHS)) {
+    const input = document.getElementById(`${kind}-bp-path-input`);
+    if (!input) continue;
+    input.value = getStoredAreaBpPath(kind);
+    input.addEventListener("change", () => setStoredAreaBpPath(kind, input.value));
+    input.addEventListener("blur", () => setStoredAreaBpPath(kind, input.value));
+  }
 }
 
 function extractSubwayRefsFromText(value) {
@@ -2614,6 +2864,7 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
   });
 
   const stations = selectedStations.map((station) => ({
+    Name: stationExportKey(station.name),
     name: station.name,
     key: stationExportKey(station.name),
     dist_m: datatableNumber(station.dist_m - segmentStartM),
@@ -2759,15 +3010,17 @@ async function copyPythonCodeFromModal() {
 
 function exportAreaUnrealPython() {
   try {
-    const payload = buildAreaPythonSplineData();
+    const payload = buildAreaPythonExportPayload();
     if (!payload) {
       setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
       return;
     }
-    const code = buildCompactAreaUnrealPythonScript(payload);
+    const bpPaths = getAreaBpPathsForExport();
+    for (const [kind, path] of Object.entries(bpPaths)) setStoredAreaBpPath(kind, path);
+    const code = buildCompactAreaUnrealPythonScript(payload, bpPaths);
     showPythonCodeModal(code);
-    const pointCount = payload.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Code: ${payload.length} Splines / ${pointCount} Punkte eingebettet`);
+    const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
+    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -3256,6 +3509,8 @@ const datatableLineSelect = document.getElementById("datatable-line-select");
 if (datatableLineSelect) {
   updateDatatableAreaLineSelection();
 }
+initAreaBpPathInputs();
+
 async function reloadCurrentFile() {
   const sourceFile = currentSourceFile;
   if (!sourceFile) {
