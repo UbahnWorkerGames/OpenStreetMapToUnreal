@@ -1968,6 +1968,8 @@ function exportToUnreal(buildOnly = false) {
   const projections = masterStations.map((s) => ({
     ...projectOntoTrack([s.lat, s.lon], rawTrack),
     name: s.name,
+    stopLat: s.lat,
+    stopLon: s.lon,
     halfLengthM: s.halfLengthM,
     halfWidthM: s.halfWidthM,
     level: s.level ?? null,
@@ -2158,7 +2160,9 @@ function exportToUnreal(buildOnly = false) {
       height_m: +(s.heightM || 0).toFixed(2),
       height_source: s.heightSource || "",
       wgs84: [+s.point[0].toFixed(7), +s.point[1].toFixed(7)],
+      stop_wgs84: [+s.stopLat.toFixed(7), +s.stopLon.toFixed(7)],
       location_cm: toUEcm(s.point[0], s.point[1], s.heightM || 0),
+      stop_location_cm: toUEcm(s.stopLat, s.stopLon, s.heightM || 0),
     })),
     sections,
     platform_geometry: platformGeometry,
@@ -3306,18 +3310,26 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
     const stationDist = Number(station.dist_m);
     const overlapsSegment = end >= segmentStartM && start <= segmentEndM;
     const stopInSelection = segmentRange?.bounds && stationInBounds(station, segmentRange.bounds);
-    return overlapsSegment || (stopInSelection && stationDist >= segmentStartM - 150 && stationDist <= segmentEndM + 150);
+    return overlapsSegment || (stopInSelection && stationDist >= segmentStartM - 500 && stationDist <= segmentEndM + 500);
   });
 
   const stations = selectedStations.map((station) => ({
     Name: stationExportKey(station.name),
     name: station.name,
     key: stationExportKey(station.name),
+    stop_name: station.name,
+    stop_key: stationExportKey(station.name),
     dist_m: datatableNumber(station.dist_m - segmentStartM),
+    stop_dist_m: datatableNumber(station.dist_m - segmentStartM),
     level: station.level ?? null,
     height_m: datatableNumber(station.height_m || 0),
     height_source: station.height_source || "",
+    wgs84: station.wgs84 || null,
+    stop_wgs84: station.stop_wgs84 || station.wgs84 || null,
     location_cm: station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
+    stop_location_cm: station.stop_location_cm || station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
+    route_location_cm: station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
+    b_is_stop: true,
   }));
 
   const stationByName = new Map(selectedStations.map((station) => [station.name, station]));
@@ -3336,12 +3348,19 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
         Name: `platform_${stationKey}`,
         UB_SectionType: "platform",
         UB_StationKey: stationKey,
+        UB_StopKey: stationKey,
+        UB_StopName: section.station,
         UB_FromM: datatableNumber(fromM - segmentStartM),
         UB_ToM: datatableNumber(toM - segmentStartM),
         UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
+        UB_StopDistM: datatableNumber(Number(sectionStation?.dist_m ?? section.center_m ?? 0) - segmentStartM),
         UB_Level: sectionStation?.level ?? null,
         UB_HeightM: datatableNumber(sectionStation?.height_m || 0),
         UB_HeightSource: sectionStation?.height_source || "",
+        UB_StopWgs84: sectionStation?.stop_wgs84 || sectionStation?.wgs84 || null,
+        UB_StopLocationCm: sectionStation?.stop_location_cm || sectionStation?.location_cm || null,
+        UB_RouteLocationCm: sectionStation?.location_cm || null,
+        UB_bIsStop: true,
       });
       continue;
     }
