@@ -2827,39 +2827,65 @@ function getAreaTransitLines() {
 
 function updateDatatableAreaLineSelection() {
   datatableAreaLines = getAreaTransitLines();
-  const lineSelect = document.getElementById("datatable-line-select");
-  if (!lineSelect) return;
+  const lineList = document.getElementById("datatable-line-list");
+  const allCheckbox = document.getElementById("datatable-line-all");
+  if (!lineList) return;
 
-  const previous = lineSelect.value;
-  lineSelect.textContent = "";
+  const previousInputs = [...lineList.querySelectorAll("input[data-datatable-line]")];
+  const hadPreviousOptions = previousInputs.length > 0;
+  const previousChecked = new Set(previousInputs.filter((input) => input.checked).map((input) => input.value));
+  const previousAllChecked = allCheckbox?.checked ?? true;
+  lineList.textContent = "";
 
   if (!datatableAreaLines.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = areaFeatures.length ? "keine ÖPNV-Linie im Bereich" : "erst Bereich laden";
-    lineSelect.appendChild(option);
+    if (allCheckbox) {
+      allCheckbox.checked = false;
+      allCheckbox.disabled = true;
+    }
+    const empty = document.createElement("span");
+    empty.className = "datatable-line-empty";
+    empty.textContent = areaFeatures.length ? "keine ÖPNV-Linie im Bereich" : "erst Bereich laden";
+    lineList.appendChild(empty);
     return;
   }
 
-  const allOption = document.createElement("option");
-  allOption.value = "__all__";
-  allOption.textContent = `alle im Bereich (${datatableAreaLines.map(transitLineLabel).join(", ")})`;
-  lineSelect.appendChild(allOption);
+  if (allCheckbox) allCheckbox.disabled = false;
+  const shouldSelectAll = !hadPreviousOptions || previousAllChecked;
 
   for (const line of datatableAreaLines) {
-    const option = document.createElement("option");
-    option.value = encodeTransitLine(line);
-    option.textContent = transitLineLabel(line);
-    lineSelect.appendChild(option);
+    const encoded = encodeTransitLine(line);
+    const label = document.createElement("label");
+    label.className = "toggle";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = encoded;
+    checkbox.dataset.datatableLine = encoded;
+    checkbox.checked = shouldSelectAll || previousChecked.has(encoded);
+    checkbox.addEventListener("change", syncDatatableLineAllCheckbox);
+
+    label.appendChild(checkbox);
+    label.append(transitLineLabel(line));
+    lineList.appendChild(label);
   }
 
-  if (datatableAreaLines.some((line) => encodeTransitLine(line) === previous) || previous === "__all__") {
-    lineSelect.value = previous;
-  } else if (lastLoadData && datatableAreaLines.some((line) => line.route === lastLoadData.routeMode && line.ref === lastLoadData.ref)) {
-    lineSelect.value = `${lastLoadData.routeMode}:${lastLoadData.ref}`;
-  } else {
-    lineSelect.value = "__all__";
-  }
+  syncDatatableLineAllCheckbox();
+}
+
+function getSelectedDatatableLines(availableLines) {
+  const selected = new Set(
+    [...document.querySelectorAll("#datatable-line-list input[data-datatable-line]:checked")]
+      .map((input) => input.value),
+  );
+  return availableLines.filter((line) => selected.has(encodeTransitLine(line)));
+}
+
+function syncDatatableLineAllCheckbox() {
+  const allCheckbox = document.getElementById("datatable-line-all");
+  if (!allCheckbox) return;
+  const inputs = [...document.querySelectorAll("#datatable-line-list input[data-datatable-line]")];
+  allCheckbox.checked = inputs.length > 0 && inputs.every((input) => input.checked);
+  allCheckbox.indeterminate = inputs.some((input) => input.checked) && !allCheckbox.checked;
 }
 
 function buildAreaRouteSegment(uePayload, bounds = areaSelectionBounds) {
@@ -2974,18 +3000,15 @@ async function ensureLineLoadedForDatatableExport(line) {
 }
 
 async function exportDatatableZip() {
-  const selectedExportLine = document.getElementById("datatable-line-select")?.value || "";
   const availableLines = datatableAreaLines.length ? datatableAreaLines : getAreaTransitLines();
   if (!availableLines.length) {
     setStatus("Erst einen Bereich mit ÖPNV-Linien laden.", true);
     return;
   }
 
-  const checked = selectedExportLine === "__all__"
-    ? availableLines
-    : availableLines.filter((line) => encodeTransitLine(line) === selectedExportLine);
+  const checked = getSelectedDatatableLines(availableLines);
   if (!checked.length) {
-    setStatus("Eine Linie aus dem geladenen Bereich waehlen.", true);
+    setStatus("Mindestens eine Linie aus dem geladenen Bereich anhaken.", true);
     return;
   }
 
@@ -3566,10 +3589,16 @@ if (select) {
   select.addEventListener("change", () => loadLine(select.value));
 }
 
-const datatableLineSelect = document.getElementById("datatable-line-select");
-if (datatableLineSelect) {
+const datatableLineList = document.getElementById("datatable-line-list");
+if (datatableLineList) {
   updateDatatableAreaLineSelection();
 }
+document.getElementById("datatable-line-all")?.addEventListener("change", (event) => {
+  for (const input of document.querySelectorAll("#datatable-line-list input[data-datatable-line]")) {
+    input.checked = event.target.checked;
+  }
+  syncDatatableLineAllCheckbox();
+});
 initAreaBpPathInputs();
 
 async function reloadCurrentFile() {

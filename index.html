@@ -79,6 +79,29 @@
         border-top: 1px solid var(--border);
       }
 
+      .export-head {
+        justify-content: space-between;
+      }
+
+      .datatable-line-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 10px;
+        margin-top: 6px;
+        max-height: 8.5rem;
+        overflow: auto;
+        padding: 6px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .datatable-line-empty {
+        grid-column: 1 / -1;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
       .toggle {
         display: flex;
         align-items: center;
@@ -365,11 +388,12 @@
         <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
       </div>
       <div class="export-box">
-        <div class="row">
-          <label for="datatable-line-select">Export</label>
-          <select id="datatable-line-select" aria-label="Datatable Export Linien">
-            <option value="">erst Bereich laden</option>
-          </select>
+        <div class="row export-head">
+          <label>Export</label>
+          <label class="toggle"><input type="checkbox" id="datatable-line-all" checked> alle</label>
+        </div>
+        <div id="datatable-line-list" class="datatable-line-list" aria-label="Datatable Export Linien">
+          <span class="datatable-line-empty">erst Bereich laden</span>
         </div>
       </div>
       <div class="row" style="margin-top: 10px">
