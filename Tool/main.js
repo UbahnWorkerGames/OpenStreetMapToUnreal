@@ -3397,9 +3397,6 @@ def configure_mesh_blueprint(blueprint, kind):
 
 
 def compile_blueprint_if_available(blueprint):
-    if hasattr(unreal, "KismetEditorUtilities"):
-        unreal.KismetEditorUtilities.compile_blueprint(blueprint)
-        return
     if hasattr(unreal, "BlueprintEditorLibrary"):
         unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
         return
