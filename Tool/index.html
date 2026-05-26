@@ -3,10 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
-    <meta http-equiv="Pragma" content="no-cache" />
-    <meta http-equiv="Expires" content="0" />
-    <title>OSM to Unreal</title>
+    <title>Berlin U-Bahn</title>
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -17,10 +14,10 @@
       :root {
         color-scheme: light;
         --bg: #f3f4f6;
-        --panel: rgba(255, 255, 255, 0.95);
+        --panel: rgba(255, 255, 255, 0.94);
         --text: #111827;
         --muted: #6b7280;
-        --border: rgba(0, 0, 0, 0.1);
+        --border: rgba(0, 0, 0, 0.08);
       }
 
       * {
@@ -46,9 +43,9 @@
         z-index: 1000;
         top: 12px;
         left: 12px;
-        max-width: min(340px, calc(100vw - 24px));
+        max-width: min(320px, calc(100vw - 24px));
         padding: 14px 16px;
-        border-radius: 8px;
+        border-radius: 10px;
         background: var(--panel);
         backdrop-filter: blur(10px);
         box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
@@ -58,22 +55,51 @@
       .panel h1 {
         margin: 0 0 10px;
         font-size: 1.05rem;
-        font-weight: 650;
+        font-weight: 600;
+        letter-spacing: -0.02em;
       }
 
       .row {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         flex-wrap: wrap;
-        margin-top: 8px;
       }
 
       .layer-toggles {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px 10px;
-        margin-top: 10px;
+        margin-top: 8px;
+      }
+
+      .export-box {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+
+      .export-head {
+        justify-content: space-between;
+      }
+
+      .datatable-line-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px 10px;
+        margin-top: 6px;
+        max-height: 8.5rem;
+        overflow: auto;
+        padding: 6px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .datatable-line-empty {
+        grid-column: 1 / -1;
+        font-size: 0.78rem;
+        color: var(--muted);
       }
 
       .toggle {
@@ -89,15 +115,9 @@
         margin: 0;
       }
 
-      input[type="search"] {
-        font: inherit;
-        font-size: 0.9rem;
-        padding: 6px 9px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--text);
-        width: 7rem;
+      .row label {
+        font-size: 0.85rem;
+        color: var(--muted);
       }
 
       .path-field {
@@ -124,6 +144,18 @@
         color: var(--text);
       }
 
+      select,
+      input[type="search"] {
+        font: inherit;
+        font-size: 0.95rem;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--text);
+        min-width: 5rem;
+      }
+
       #status {
         margin: 10px 0 0;
         font-size: 0.8rem;
@@ -146,13 +178,139 @@
         background: #f9fafb;
       }
 
-      .btn-clear.active {
-        background: #dcfce7;
-        border-color: #86efac;
-        color: #166534;
+      .panel a {
+        color: #2563eb;
+        text-decoration: none;
       }
 
-      .code-modal {
+      .panel a:hover {
+        text-decoration: underline;
+      }
+
+      #direction {
+        margin: 8px 0 0;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        color: var(--text);
+        font-weight: 500;
+      }
+
+      .leaflet-tooltip.station-tip {
+        background: rgba(30, 41, 59, 0.92);
+        color: #f1f5f9;
+        border: none;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 4px 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      }
+
+      .leaflet-tooltip.station-tip::before {
+        border-top-color: rgba(30, 41, 59, 0.92);
+      }
+
+      .area-edit-handle {
+        width: 14px;
+        height: 14px;
+        border: 2px solid #0f766e;
+        border-radius: 4px;
+        background: #ffffff;
+        box-shadow: 0 1px 6px rgba(15, 118, 110, 0.35);
+      }
+
+      .area-edit-handle.move {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        background: #14b8a6;
+      }
+
+      .btn-clear.active {
+        background: #fce7f3;
+        border-color: #f9a8d4;
+        color: #be185d;
+      }
+
+      .edit-panel {
+        position: absolute;
+        z-index: 1000;
+        bottom: 40px;
+        left: 12px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: var(--panel);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+        border: 1px solid var(--border);
+        min-width: 220px;
+      }
+
+      .edit-panel-name {
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 10px;
+        color: var(--text);
+      }
+
+      .edit-fields {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .edit-fields label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .edit-fields input[type="number"] {
+        width: 72px;
+        font: inherit;
+        font-size: 0.9rem;
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+
+      .edit-handle {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #be185d;
+        border: 3px solid #fff;
+        cursor: move;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        transition: transform 0.15s;
+      }
+
+      .edit-handle:hover {
+        transform: scale(1.3);
+      }
+
+      .spline-control {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid #fff;
+        cursor: move;
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+        transition: transform 0.1s;
+      }
+
+      .spline-control:hover {
+        background: #1d4ed8;
+        transform: scale(1.5);
+      }
+
+      .code-modal,
+      .options-modal {
         position: fixed;
         z-index: 2000;
         inset: 0;
@@ -163,11 +321,13 @@
         background: rgba(15, 23, 42, 0.55);
       }
 
-      .code-modal[hidden] {
+      .code-modal[hidden],
+      .options-modal[hidden] {
         display: none;
       }
 
-      .code-modal-panel {
+      .code-modal-panel,
+      .options-modal-panel {
         display: flex;
         flex-direction: column;
         width: min(1100px, 100%);
@@ -178,7 +338,19 @@
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
       }
 
+      .options-modal-panel {
+        width: min(520px, 100%);
+        align-self: flex-start;
+        margin-top: 5vh;
+      }
+
+      .options-modal-body {
+        padding: 12px;
+        overflow: auto;
+      }
+
       .code-modal-head,
+      .options-modal-head,
       .code-modal-actions {
         display: flex;
         align-items: center;
@@ -188,15 +360,17 @@
         border-bottom: 1px solid var(--border);
       }
 
-      .code-modal-actions {
+      .code-modal-actions,
+      .options-modal-actions {
         justify-content: flex-end;
         border-top: 1px solid var(--border);
         border-bottom: none;
       }
 
-      .code-modal-title {
+      .code-modal-title,
+      .options-modal-title {
         font-size: 0.95rem;
-        font-weight: 650;
+        font-weight: 600;
       }
 
       #python-code-output {
@@ -216,44 +390,100 @@
   </head>
   <body>
     <div class="panel">
-      <h1>OSM to Unreal</h1>
-      <div class="path-field">
-        <label for="street-bp-path-input">Street Path BP</label>
-        <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+      <h1>Berlin · U-Bahn</h1>
+      <div class="row" style="margin-top: 6px">
+        <button type="button" class="btn-clear" id="btn-edit">✏ Bearbeiten</button>
+        <button type="button" class="btn-clear" id="btn-fit" title="Gesamte Route anzeigen">⊕</button>
+        <button type="button" class="btn-clear" id="btn-options" title="Blueprint-Optionen">Optionen</button>
       </div>
-      <div class="path-field">
-        <label for="building-bp-path-input">Building Cube BP</label>
-        <input id="building-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+      <div class="row" style="margin-top: 6px">
+        <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
+        <button type="button" class="btn-clear" id="btn-export-datatables" title="UE-Datatables als ZIP exportieren">DT ZIP</button>
+        <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Area-JSON speichern">PCG JSON</button>
+        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script fuer Bereichs-Splines speichern">UE Python</button>
+        <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
+        <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
       </div>
-      <div class="row">
+      <div class="export-box">
+        <div class="row export-head">
+          <label>Export</label>
+          <label class="toggle"><input type="checkbox" id="datatable-line-all" checked> alle</label>
+        </div>
+        <div id="datatable-line-list" class="datatable-line-list" aria-label="Datatable Export Linien">
+          <span class="datatable-line-empty">erst Bereich laden</span>
+        </div>
+      </div>
+      <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
-        <button type="button" class="btn-clear" id="btn-area-load" title="OSM-Daten im gewaehlten Bereich von Overpass laden">Overpass laden</button>
+        <button type="button" class="btn-clear" id="btn-area-load" title="Straßen, Schienen, Bus- und Bahnlinien im markierten Bereich laden">Bereich laden</button>
       </div>
-      <div class="row">
-        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Code anzeigen">UE Python</button>
-      </div>
-      <div class="row">
-        <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" />
+      <div class="row" style="margin-top: 6px">
+        <label for="postal-code-input">PLZ</label>
+        <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" style="width: 6.5rem">
         <button type="button" class="btn-clear" id="btn-postal-code">Ort</button>
       </div>
-      <div class="layer-toggles" aria-label="OSM-Layer">
+      <div class="layer-toggles" aria-label="Bereichs-Layer">
         <label class="toggle"><input type="checkbox" data-area-layer="motorway"> Autobahn</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="major_road" checked> Hauptstrasse</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="major_road"> Hauptstrasse</label>
         <label class="toggle"><input type="checkbox" data-area-layer="city_road"> Stadtstrasse</label>
         <label class="toggle"><input type="checkbox" data-area-layer="service"> Service</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
         <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway"> Subway</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="building"> Gebaeude</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="traffic_sign"> Verkehrsschild</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="traffic_signal"> Ampel</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="sports_field"> Sportplatz</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="water"> Wasser</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="bus"> Bus</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="building"> Gebäude</label>
+        <label class="toggle"><input type="checkbox" data-area-layer="tree"> Bäume</label>
       </div>
+      <p id="direction" hidden></p>
       <p id="status"></p>
     </div>
+    <div id="map" role="application" aria-label="Karte Berlin U-Bahn"></div>
 
-    <div id="map" role="application" aria-label="OSM export map"></div>
+    <div id="options-modal" class="options-modal" hidden>
+      <div class="options-modal-panel" role="dialog" aria-modal="true" aria-labelledby="options-title">
+        <div class="options-modal-head">
+          <div id="options-title" class="options-modal-title">Optionen</div>
+          <button type="button" class="btn-clear" id="btn-options-close">Schliessen</button>
+        </div>
+        <div class="options-modal-body">
+          <div class="path-field">
+            <label for="tunnel-bp-path-input">Tunnel BP</label>
+            <input id="tunnel-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="subway-bp-path-input">U-Bahn/Gleis BP</label>
+            <input id="subway-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="tram-bp-path-input">Tram BP</label>
+            <input id="tram-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="train-bp-path-input">S-Bahn/Zug BP</label>
+            <input id="train-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="bus-bp-path-input">Bus BP</label>
+            <input id="bus-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="street-bp-path-input">Straße BP</label>
+            <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="building-bp-path-input">Gebäude BP</label>
+            <input id="building-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="tree-bp-path-input">Baum BP</label>
+            <input id="tree-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="options-modal-actions">
+            <button type="button" class="btn-clear" id="btn-generate-bp-python">BP Python</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="python-code-modal" class="code-modal" hidden>
       <div class="code-modal-panel" role="dialog" aria-modal="true" aria-labelledby="python-code-title">
@@ -269,11 +499,20 @@
       </div>
     </div>
 
+    <div id="edit-panel" class="edit-panel" hidden>
+      <div id="edit-name" class="edit-panel-name"></div>
+      <div class="edit-fields">
+        <label>Länge <input id="edit-len" type="number" step="5" min="10"> m</label>
+        <label>Breite <input id="edit-wid" type="number" step="0.5" min="1"> m</label>
+      </div>
+      <button type="button" class="btn-clear" id="edit-reset">Zurücksetzen</button>
+    </div>
+
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="/main.js?v=20260526-cache-bust"></script>
+    <script type="module" src="/main.js"></script>
   </body>
 </html>

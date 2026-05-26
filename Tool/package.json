@@ -1,5 +1,5 @@
 {
-  "name": "osm-to-unreal",
+  "name": "uemap",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
   }
 }
