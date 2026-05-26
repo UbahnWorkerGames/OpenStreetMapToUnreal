@@ -72,6 +72,7 @@ const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
 const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
+const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 const DEFAULT_AREA_BP_PATHS = {
   tunnel: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
@@ -164,6 +165,117 @@ function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
     .filter(([, visible]) => visible)
     .map(([category]) => category);
+}
+
+function setSelectedAreaCategories(categories) {
+  const selected = new Set(categories || []);
+  for (const key of areaLayerVisibility.keys()) areaLayerVisibility.set(key, selected.has(key));
+  document.querySelectorAll("[data-area-layer]").forEach((input) => {
+    input.checked = selected.has(input.dataset.areaLayer);
+  });
+}
+
+function readSavedAreaSelections() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(AREA_SELECTIONS_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((entry) => entry?.name && entry?.bounds) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedAreaSelections(selections) {
+  window.localStorage.setItem(AREA_SELECTIONS_STORAGE_KEY, JSON.stringify(selections));
+}
+
+function areaSelectionToPlainBounds(bounds) {
+  return {
+    south: +bounds.getSouth().toFixed(7),
+    west: +bounds.getWest().toFixed(7),
+    north: +bounds.getNorth().toFixed(7),
+    east: +bounds.getEast().toFixed(7),
+  };
+}
+
+function plainBoundsToLatLngBounds(bounds) {
+  if (!bounds) return null;
+  const south = Number(bounds.south);
+  const west = Number(bounds.west);
+  const north = Number(bounds.north);
+  const east = Number(bounds.east);
+  if (![south, west, north, east].every(Number.isFinite)) return null;
+  return L.latLngBounds([south, west], [north, east]);
+}
+
+function refreshSavedAreaSelectionSelect(selectedName = "") {
+  const select = document.getElementById("area-selection-preset");
+  if (!select) return;
+  const selections = readSavedAreaSelections().sort((a, b) => a.name.localeCompare(b.name, "de"));
+  select.textContent = "";
+  if (!selections.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "keine gespeichert";
+    select.appendChild(option);
+    return;
+  }
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Selection laden...";
+  select.appendChild(empty);
+  for (const selection of selections) {
+    const option = document.createElement("option");
+    option.value = selection.name;
+    option.textContent = selection.name;
+    select.appendChild(option);
+  }
+  select.value = selectedName;
+}
+
+function saveCurrentAreaSelection() {
+  if (!areaSelectionBounds?.isValid?.()) {
+    setStatus("Erst einen Bereich auf der Karte markieren.", true);
+    return;
+  }
+  const fallback = `Selection ${new Date().toLocaleString("de-DE")}`;
+  const name = window.prompt("Name der Selection", fallback)?.trim();
+  if (!name) return;
+  const selections = readSavedAreaSelections().filter((entry) => entry.name !== name);
+  selections.push({
+    name,
+    bounds: areaSelectionToPlainBounds(areaSelectionBounds),
+    layers: getSelectedAreaCategories(),
+    savedAt: new Date().toISOString(),
+  });
+  writeSavedAreaSelections(selections);
+  refreshSavedAreaSelectionSelect(name);
+  setStatus(`Selection gespeichert: ${name}`);
+}
+
+function loadSavedAreaSelection(name) {
+  const selection = readSavedAreaSelections().find((entry) => entry.name === name);
+  if (!selection) return;
+  const bounds = plainBoundsToLatLngBounds(selection.bounds);
+  if (!bounds?.isValid?.()) {
+    setStatus(`Selection ist ungueltig: ${name}`, true);
+    return;
+  }
+  setSelectedAreaCategories(selection.layers || []);
+  setAreaSelectionBounds(bounds, `Selection geladen (${name})`);
+  map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
+}
+
+function deleteSavedAreaSelection() {
+  const select = document.getElementById("area-selection-preset");
+  const name = select?.value || "";
+  if (!name) {
+    setStatus("Keine gespeicherte Selection gewaehlt.", true);
+    return;
+  }
+  const selections = readSavedAreaSelections().filter((entry) => entry.name !== name);
+  writeSavedAreaSelections(selections);
+  refreshSavedAreaSelectionSelect();
+  setStatus(`Selection geloescht: ${name}`);
 }
 
 function areaBoundsCacheKey(bounds, categories = getSelectedAreaCategories()) {
@@ -4354,10 +4466,16 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
+document.getElementById("btn-area-save-selection")?.addEventListener("click", saveCurrentAreaSelection);
+document.getElementById("btn-area-delete-selection")?.addEventListener("click", deleteSavedAreaSelection);
+document.getElementById("area-selection-preset")?.addEventListener("change", (event) => {
+  if (event.target.value) loadSavedAreaSelection(event.target.value);
+});
 document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
 document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") selectPostalCodeArea();
 });
+refreshSavedAreaSelectionSelect();
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
