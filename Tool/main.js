@@ -2001,37 +2001,7 @@ function exportToUnreal(buildOnly = false) {
     ];
   }
 
-  // ── Kontroll-Spline mit Tangenten ─────────────────────────────────────────
-  const pts = orientedCtrlPts.map((p) => toUEcm(p[0], p[1]));
-  const n = pts.length;
-  const splinePoints = pts.map((p, i) => {
-    const prev = pts[Math.max(0, i - 1)];
-    const next = pts[Math.min(n - 1, i + 1)];
-    const tx =
-      i === 0 ? next[0] - p[0] : i === n - 1 ? p[0] - prev[0] : 0.5 * (next[0] - prev[0]);
-    const ty =
-      i === 0 ? next[1] - p[1] : i === n - 1 ? p[1] - prev[1] : 0.5 * (next[1] - prev[1]);
-    return {
-      location: p,
-      arrive_tangent: [+tx.toFixed(1), +ty.toFixed(1), 0],
-      leave_tangent: [+tx.toFixed(1), +ty.toFixed(1), 0],
-    };
-  });
-
-  // ── Finale Route exakt wie im Web als dichte Punktfolge ───────────────────
-  const routePoints = [];
-  let routeCum = 0;
-  for (let i = 0; i < finalTrack.length; i++) {
-    if (i > 0) routeCum += haversineM(finalTrack[i - 1], finalTrack[i]);
-    routePoints.push({
-      index: i,
-      dist_m: +routeCum.toFixed(2),
-      wgs84: [+finalTrack[i][0].toFixed(7), +finalTrack[i][1].toFixed(7)],
-      pos_cm: toUEcm(finalTrack[i][0], finalTrack[i][1]),
-    });
-  }
-
-  // ── Stationen auf finale Web-Route projizieren ───────────────────────────
+  // Stationen auf finale Web-Route projizieren, danach Hoehen entlang der Route interpolieren.
   const finalStations = masterStations.map((s) => ({
     ...projectOntoTrack([s.lat, s.lon], finalTrack),
     name: s.name,
@@ -2045,6 +2015,65 @@ function exportToUnreal(buildOnly = false) {
   }));
   const sorted = [...finalStations].sort((a, b) => a.distAlongTrack - b.distAlongTrack);
 
+  const heightAnchors = [
+    { distM: 0, heightM: 0 },
+    ...sorted.map((s) => ({ distM: s.distAlongTrack, heightM: s.heightM || 0 })),
+    { distM: finalRouteLengthM, heightM: 0 },
+  ]
+    .filter((anchor) => Number.isFinite(anchor.distM) && Number.isFinite(anchor.heightM))
+    .sort((a, b) => a.distM - b.distM);
+
+  function heightAtDistanceM(distM) {
+    if (!heightAnchors.length) return 0;
+    if (distM <= heightAnchors[0].distM) return heightAnchors[0].heightM;
+    for (let index = 0; index < heightAnchors.length - 1; index += 1) {
+      const a = heightAnchors[index];
+      const b = heightAnchors[index + 1];
+      if (distM > b.distM) continue;
+      const span = b.distM - a.distM;
+      if (span <= 0.001) return b.heightM;
+      const t = (distM - a.distM) / span;
+      return a.heightM + (b.heightM - a.heightM) * t;
+    }
+    return heightAnchors.at(-1).heightM;
+  }
+
+  // ── Kontroll-Spline mit Tangenten ─────────────────────────────────────────
+  const pts = orientedCtrlPts.map((p) => {
+    const proj = projectOntoTrack(p, finalTrack);
+    return toUEcm(p[0], p[1], heightAtDistanceM(proj.distAlongTrack));
+  });
+  const n = pts.length;
+  const splinePoints = pts.map((p, i) => {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(n - 1, i + 1)];
+    const tx =
+      i === 0 ? next[0] - p[0] : i === n - 1 ? p[0] - prev[0] : 0.5 * (next[0] - prev[0]);
+    const ty =
+      i === 0 ? next[1] - p[1] : i === n - 1 ? p[1] - prev[1] : 0.5 * (next[1] - prev[1]);
+    const tz =
+      i === 0 ? next[2] - p[2] : i === n - 1 ? p[2] - prev[2] : 0.5 * (next[2] - prev[2]);
+    return {
+      location: p,
+      arrive_tangent: [+tx.toFixed(1), +ty.toFixed(1), +tz.toFixed(1)],
+      leave_tangent: [+tx.toFixed(1), +ty.toFixed(1), +tz.toFixed(1)],
+    };
+  });
+
+  // ── Finale Route exakt wie im Web als dichte Punktfolge ───────────────────
+  const routePoints = [];
+  let routeCum = 0;
+  for (let i = 0; i < finalTrack.length; i++) {
+    if (i > 0) routeCum += haversineM(finalTrack[i - 1], finalTrack[i]);
+    routePoints.push({
+      index: i,
+      dist_m: +routeCum.toFixed(2),
+      height_m: +heightAtDistanceM(routeCum).toFixed(2),
+      wgs84: [+finalTrack[i][0].toFixed(7), +finalTrack[i][1].toFixed(7)],
+      pos_cm: toUEcm(finalTrack[i][0], finalTrack[i][1], heightAtDistanceM(routeCum)),
+    });
+  }
+
   // ── Sections: tunnel / platform auf Basis der finalen Route ──────────────
   const sections = [];
   let cursor = 0;
@@ -2053,7 +2082,14 @@ function exportToUnreal(buildOnly = false) {
     const pEnd = +(Math.min(finalRouteLengthM, s.distAlongTrack + s.halfLengthM)).toFixed(2);
 
     if (pStart > cursor + 0.1) {
-      sections.push({ type: "tunnel", from_m: +cursor.toFixed(2), to_m: pStart });
+      sections.push({
+        type: "tunnel",
+        from_m: +cursor.toFixed(2),
+        to_m: pStart,
+        from_height_m: +heightAtDistanceM(cursor).toFixed(2),
+        to_height_m: +heightAtDistanceM(pStart).toFixed(2),
+        center_height_m: +heightAtDistanceM((cursor + pStart) * 0.5).toFixed(2),
+      });
     }
     sections.push({
       type: "platform",
@@ -2061,11 +2097,21 @@ function exportToUnreal(buildOnly = false) {
       from_m: pStart,
       to_m: pEnd,
       center_m: +s.distAlongTrack.toFixed(2),
+      from_height_m: +(s.heightM || 0).toFixed(2),
+      to_height_m: +(s.heightM || 0).toFixed(2),
+      center_height_m: +(s.heightM || 0).toFixed(2),
     });
     cursor = pEnd;
   }
   if (cursor < finalRouteLengthM - 0.1) {
-    sections.push({ type: "tunnel", from_m: +cursor.toFixed(2), to_m: +finalRouteLengthM.toFixed(2) });
+    sections.push({
+      type: "tunnel",
+      from_m: +cursor.toFixed(2),
+      to_m: +finalRouteLengthM.toFixed(2),
+      from_height_m: +heightAtDistanceM(cursor).toFixed(2),
+      to_height_m: +heightAtDistanceM(finalRouteLengthM).toFixed(2),
+      center_height_m: +heightAtDistanceM((cursor + finalRouteLengthM) * 0.5).toFixed(2),
+    });
   }
 
   const platformGeometry = sorted.map((s) => {
@@ -3517,7 +3563,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
         UB_ToM: datatableNumber(toM - segmentStartM),
         UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
         UB_Level: sectionStation?.level ?? null,
-        UB_HeightM: datatableNumber(sectionStation?.height_m || 0),
+        UB_HeightM: datatableNumber(section.center_height_m ?? sectionStation?.height_m ?? 0),
+        UB_FromHeightM: datatableNumber(section.from_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
+        UB_ToHeightM: datatableNumber(section.to_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
         UB_HeightSource: sectionStation?.height_source || "",
       });
       continue;
@@ -3531,7 +3579,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
       UB_ToM: datatableNumber(toM - segmentStartM),
       UB_CenterM: 0,
       UB_Level: null,
-      UB_HeightM: 0,
+      UB_HeightM: datatableNumber(section.center_height_m || 0),
+      UB_FromHeightM: datatableNumber(section.from_height_m || 0),
+      UB_ToHeightM: datatableNumber(section.to_height_m || 0),
       UB_HeightSource: "",
     });
   }
