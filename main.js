@@ -78,6 +78,7 @@ const DEFAULT_AREA_BP_PATHS = {
   subway: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   tram: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   train: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  bus: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   street: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   building: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
   tree: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
@@ -1324,6 +1325,49 @@ function stitchConnectedAreaFeatures(features) {
   return pending;
 }
 
+function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
+  const features = [];
+  const elements = data.elements || [];
+  for (const relation of elements) {
+    const tags = relation.tags || {};
+    if (relation.type !== "relation" || tags.type !== "route" || tags.route !== "bus") continue;
+
+    const stitched = stitchTrackSegments(extractTrackSegments(relation, elements));
+    if (stitched.length < 2) continue;
+    const clippedParts = clipPolylineToBounds(stitched, bounds);
+    for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
+      const clippedGeometry = clippedParts[partIndex];
+      if (clippedGeometry.length < 2) continue;
+      const simplifiedGeometry = simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+      const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+      const signature = areaGeometrySignature("bus", segment10mGeometry);
+      if (seenSignatures.has(signature)) continue;
+      seenSignatures.add(signature);
+      const ref = tags.ref || tags.route_ref || "";
+      const name = tags.name || (ref ? `Bus ${ref}` : `Bus ${relation.id}`);
+      const key = normalizeAreaKey(`bus_${ref || name}_${relation.id}_${partIndex}`);
+      if (!key) throw new Error(`Bus-Relation ${relation.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      features.push({
+        id: relation.id,
+        key,
+        category: "bus",
+        shape: "line",
+        closed: false,
+        name,
+        sourceIds: [relation.id],
+        tags,
+        rawGeometry: stitched,
+        clippedGeometry,
+        simplifiedGeometry,
+        controlGeometry: simplifiedGeometry,
+        segment10mGeometry,
+        routeRef: ref,
+      });
+    }
+  }
+  return features;
+}
+
 function buildAreaFeatures(data, bounds) {
   const features = [];
   const seenSignatures = new Set();
@@ -1393,13 +1437,14 @@ function buildAreaFeatures(data, bounds) {
       });
     }
   }
+  features.push(...buildAreaTransitRelationFeatures(data, bounds, seenSignatures));
   const pointFeatures = features.filter((feature) => feature.shape === "point");
   const lineFeatures = features.filter((feature) => feature.shape !== "point");
   return [...stitchConnectedAreaFeatures(mergeAreaCenterlines(lineFeatures)), ...pointFeatures];
 }
 
 function areaFeatureLabel(feature) {
-  const roadType = feature.tags.highway || feature.tags.railway || feature.tags.natural || "";
+  const roadType = feature.tags.highway || feature.tags.railway || feature.tags.route || feature.tags.natural || "";
   const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
   return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
 }
@@ -2045,7 +2090,7 @@ function exportMaster() {
 }
 
 function areaFeatureExportClass(feature) {
-  return feature.tags.highway || feature.tags.railway || "";
+  return feature.tags.highway || feature.tags.railway || feature.tags.route || "";
 }
 
 function areaTagBool(value) {
@@ -2111,6 +2156,8 @@ function areaFeatureWidthM(feature) {
     case "rail_train":
     case "rail_subway":
       return 4;
+    case "bus":
+      return 3.5;
     case "building":
       return 1;
     case "tree":
@@ -2673,6 +2720,8 @@ def bp_kind_for_row(row):
         return "tram"
     if row_type == "rail_train":
         return "train"
+    if row_type == "bus":
+        return "bus"
     return "street"
 
 
