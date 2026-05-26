@@ -1369,12 +1369,30 @@ function renderAreaFeatures() {
 
   if (areaFeatures.length) {
     updateDatatableAreaLineSelection();
+    setStatus(formatAreaContentStatus(counts, visibleCount));
+    return;
     const summary = [...counts.entries()]
       .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
       .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
       .join(" · ");
     setStatus(`Bereich geladen: ${visibleCount}/${areaFeatures.length} Linien sichtbar${summary ? ` · ${summary}` : ""}`);
   }
+}
+
+function formatAreaContentStatus(counts, visibleCount) {
+  const selectedCategories = getSelectedAreaCategories();
+  const selectedLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
+  const content = [...counts.entries()]
+    .filter(([, count]) => count > 0)
+    .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
+    .join(" | ");
+  const lines = datatableAreaLines.length ? datatableAreaLines.join(", ") : "keine";
+  return [
+    `Bereich geladen: ${visibleCount}/${areaFeatures.length} sichtbare Segmente`,
+    `U-Bahn-Linien: ${lines}`,
+    `Inhalt: ${content || "nichts gefunden"}`,
+    `Layer: ${selectedLabels || "keine"}`,
+  ].join(" · ");
 }
 
 function setAreaSelectMode(active) {
@@ -1408,7 +1426,7 @@ function setAreaSelectionBounds(bounds) {
     haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]),
     haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]),
   ];
-  setStatus(`Bereich gewaehlt: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m`);
+  setStatus(`Bereich markiert: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m · Jetzt "Bereich laden" klicken.`);
 }
 
 function beginAreaSelection(e) {
@@ -3351,7 +3369,7 @@ document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFi
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
-document.getElementById("btn-area-load")?.addEventListener("click", importAreaFromOverpass);
+document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
 document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
 document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") selectPostalCodeArea();
