@@ -415,10 +415,9 @@ function elementPoint(el, idx, seen = new Set()) {
     let lat = 0;
     let lon = 0;
     let count = 0;
-    for (const g of el.geometry) {
-      if (g?.lat == null || g?.lon == null) continue;
-      lat += g.lat;
-      lon += g.lon;
+    for (const [pointLat, pointLon] of normalizeOverpassGeometry(el.geometry)) {
+      lat += pointLat;
+      lon += pointLon;
       count += 1;
     }
     if (count) return [lat / count, lon / count];
@@ -467,12 +466,14 @@ function extractTrackSegments(relation, elements = []) {
     .map((m) => {
       // Fall A: geometry direkt im Member (ältere/andere Overpass-Ausgaben)
       if (Array.isArray(m.geometry) && m.geometry.length >= 2) {
-        return m.geometry.map((g) => [g.lat, g.lon]);
+        const geometry = normalizeOverpassGeometry(m.geometry);
+        return geometry.length >= 2 ? geometry : null;
       }
       // Fall B: geometry liegt im globalen way-Element (out body; >; out geom;)
       const way = elementByWayId.get(m.ref);
       if (way && Array.isArray(way.geometry) && way.geometry.length >= 2) {
-        return way.geometry.map((g) => [g.lat, g.lon]);
+        const geometry = normalizeOverpassGeometry(way.geometry);
+        return geometry.length >= 2 ? geometry : null;
       }
       return null;
     })
@@ -607,12 +608,13 @@ function buildPlatformIndex(relations, elements) {
     const name = getStationName(tagsSource);
     if (!name) return;
     const norm = normalizeName(name);
-    if (!byNorm.has(norm) && Array.isArray(geometryRaw) && geometryRaw.length >= 2) {
+    const geometry = normalizeOverpassGeometry(geometryRaw);
+    if (!byNorm.has(norm) && geometry.length >= 2) {
       byNorm.set(norm, {
         id,
         name,
         tags: tagsSource?.tags || {},
-        geometry: geometryRaw.map((g) => [g.lat ?? g[0], g.lon ?? g[1]]),
+        geometry,
       });
     }
   }
@@ -1452,8 +1454,13 @@ function areaFeatureLabel(feature) {
 function normalizeOverpassGeometry(geometry) {
   if (!Array.isArray(geometry)) return [];
   return geometry
-    .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lon))
-    .map((point) => [point.lat, point.lon]);
+    .map((point) => {
+      if (!point) return null;
+      const lat = Array.isArray(point) ? point[0] : point.lat;
+      const lon = Array.isArray(point) ? point[1] : point.lon;
+      return Number.isFinite(lat) && Number.isFinite(lon) ? [lat, lon] : null;
+    })
+    .filter(Boolean);
 }
 
 function renderAreaFeatures() {
