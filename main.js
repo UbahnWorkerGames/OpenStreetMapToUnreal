@@ -80,6 +80,7 @@ const DEFAULT_AREA_BP_PATHS = {
   train: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   street: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   building: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
+  tree: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
 };
 const AREA_BP_STORAGE_KEY_PREFIX = "ubahn.areaBpPath.";
 let persistCacheTimer = null;
@@ -112,6 +113,7 @@ const AREA_STYLE = {
   rail_subway: { color: "#2563eb", weight: 3 },
   bus: { color: "#0891b2", weight: 2.5 },
   building: { color: "#64748b", weight: 1.2 },
+  tree: { color: "#15803d", weight: 2 },
 };
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
@@ -122,8 +124,10 @@ const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
-const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service", "building"]);
+const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service", "building", "tree"]);
 const DEFAULT_BUILDING_HEIGHT_CM = 300;
+const DEFAULT_TREE_HEIGHT_CM = 600;
+const DEFAULT_TREE_CROWN_DIAMETER_CM = 450;
 
 const AREA_LAYER_LABELS = {
   motorway: "Autobahn",
@@ -135,6 +139,7 @@ const AREA_LAYER_LABELS = {
   rail_subway: "U-Bahn",
   bus: "Bus",
   building: "Gebaeude",
+  tree: "Baeume",
 };
 
 const areaLayerVisibility = new Map(
@@ -1000,6 +1005,11 @@ function classifyAreaWay(tags = {}) {
   return null;
 }
 
+function classifyAreaNode(tags = {}) {
+  if (tags.natural === "tree") return "tree";
+  return null;
+}
+
 function areaOverpassFilterForCategory(category) {
   switch (category) {
     case "motorway":
@@ -1020,6 +1030,8 @@ function areaOverpassFilterForCategory(category) {
       return null;
     case "building":
       return 'way["building"]';
+    case "tree":
+      return 'node["natural"="tree"]';
     default:
       return null;
   }
@@ -1316,6 +1328,32 @@ function buildAreaFeatures(data, bounds) {
   const features = [];
   const seenSignatures = new Set();
   for (const el of data.elements || []) {
+    if (el.type === "node" && Number.isFinite(el.lat) && Number.isFinite(el.lon)) {
+      if (!bounds.contains(L.latLng(el.lat, el.lon))) continue;
+      const category = classifyAreaNode(el.tags || {});
+      if (!category) continue;
+      const tags = el.tags || {};
+      const name = areaGroupName(tags, category, el.id);
+      const key = normalizeAreaKey(`${category}_${name}_${el.id}`);
+      if (!key) throw new Error(`Node ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      features.push({
+        id: el.id,
+        key,
+        category,
+        shape: "point",
+        closed: false,
+        name,
+        sourceIds: [el.id],
+        tags,
+        rawGeometry: [[el.lat, el.lon]],
+        clippedGeometry: [[el.lat, el.lon]],
+        simplifiedGeometry: [[el.lat, el.lon]],
+        controlGeometry: [[el.lat, el.lon]],
+        segment10mGeometry: [[el.lat, el.lon]],
+      });
+      continue;
+    }
+
     if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
     const category = classifyAreaWay(el.tags || {});
     if (!category) continue;
@@ -1355,11 +1393,13 @@ function buildAreaFeatures(data, bounds) {
       });
     }
   }
-  return stitchConnectedAreaFeatures(mergeAreaCenterlines(features));
+  const pointFeatures = features.filter((feature) => feature.shape === "point");
+  const lineFeatures = features.filter((feature) => feature.shape !== "point");
+  return [...stitchConnectedAreaFeatures(mergeAreaCenterlines(lineFeatures)), ...pointFeatures];
 }
 
 function areaFeatureLabel(feature) {
-  const roadType = feature.tags.highway || feature.tags.railway || "";
+  const roadType = feature.tags.highway || feature.tags.railway || feature.tags.natural || "";
   const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
   return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
 }
@@ -1383,6 +1423,18 @@ function renderAreaFeatures() {
     visibleCount += 1;
 
     const style = AREA_STYLE[feature.category];
+    if (feature.shape === "point") {
+      L.circleMarker(feature.controlGeometry[0], {
+        radius: 4,
+        color: style.color,
+        weight: style.weight,
+        opacity: 0.9,
+        fillColor: style.color,
+        fillOpacity: 0.5,
+      }).bindTooltip(areaFeatureLabel(feature)).addTo(areaProcessedLayer);
+      continue;
+    }
+
     if (AREA_DRAW_RAW_GEOMETRY) {
       L.polyline(feature.clippedGeometry, {
         color: style.color,
@@ -2021,6 +2073,24 @@ function buildingHeightCm(tags = {}) {
   return DEFAULT_BUILDING_HEIGHT_CM;
 }
 
+function treeHeightCm(tags = {}) {
+  const heightM = areaTagFloat(tags.height);
+  if (heightM != null && heightM > 0) return heightM * 100;
+  return DEFAULT_TREE_HEIGHT_CM;
+}
+
+function treeCrownDiameterCm(tags = {}) {
+  const crownDiameterM = areaTagFloat(tags["diameter_crown"]) ?? areaTagFloat(tags["crown:diameter"]);
+  if (crownDiameterM != null && crownDiameterM > 0) return crownDiameterM * 100;
+  const circumferenceM = areaTagFloat(tags.circumference);
+  if (circumferenceM != null && circumferenceM > 0) return Math.max(100, (circumferenceM / Math.PI) * 800);
+  return DEFAULT_TREE_CROWN_DIAMETER_CM;
+}
+
+function treeType(tags = {}) {
+  return tags.species || tags.genus || tags.taxon || tags.leaf_type || tags.leaf_cycle || tags.denotation || "tree";
+}
+
 function areaFeatureWidthM(feature) {
   const explicitWidth = areaTagFloat(feature.tags.width);
   if (explicitWidth != null) return explicitWidth;
@@ -2043,6 +2113,8 @@ function areaFeatureWidthM(feature) {
       return 4;
     case "building":
       return 1;
+    case "tree":
+      return Math.max(1, treeCrownDiameterCm(feature.tags) / 100);
     default:
       return 5;
   }
@@ -2250,9 +2322,41 @@ function buildBuildingData(selected, transform) {
     .filter(Boolean);
 }
 
+function buildTreeData(selected, transform) {
+  return selected
+    .filter((feature) => feature.category === "tree" && feature.controlGeometry.length >= 1)
+    .map((feature) => {
+      const [lat, lon] = feature.controlGeometry[0];
+      const location = transform.toPointCm([lat, lon]);
+      const heightCm = +treeHeightCm(feature.tags).toFixed(1);
+      const crownDiameterCm = +treeCrownDiameterCm(feature.tags).toFixed(1);
+      return {
+        TreeKey: feature.key,
+        OsmId: feature.id,
+        Name: feature.name || feature.key,
+        Type: treeType(feature.tags),
+        Species: feature.tags.species || "",
+        Genus: feature.tags.genus || "",
+        LeafType: feature.tags.leaf_type || "",
+        LeafCycle: feature.tags.leaf_cycle || "",
+        Denotation: feature.tags.denotation || "",
+        HeightCm: Math.max(100, heightCm),
+        CrownDiameterCm: Math.max(100, crownDiameterCm),
+        CircumferenceM: areaTagFloat(feature.tags.circumference) ?? null,
+        X: location.X,
+        Y: location.Y,
+        Z: 0,
+        Wgs84: {
+          lat: +lat.toFixed(7),
+          lon: +lon.toFixed(7),
+        },
+      };
+    });
+}
+
 function buildAreaPythonExportPayload() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1,
   );
   if (!selected.length) return null;
   const transform = buildAreaExportTransform(selected);
@@ -2263,6 +2367,7 @@ function buildAreaPythonExportPayload() {
     origin_wgs84: transform.originWgs84,
     splines: splines.filter((row) => row.Type !== "building"),
     buildings: buildBuildingData(selected, transform),
+    trees: buildTreeData(selected, transform),
   };
 }
 
@@ -2512,8 +2617,10 @@ main()
 function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
   const splines = Array.isArray(payload) ? payload : (payload?.splines || []);
   const buildings = Array.isArray(payload) ? [] : (payload?.buildings || []);
+  const trees = Array.isArray(payload) ? [] : (payload?.trees || []);
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
   const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
+  const treeJsonLiteral = JSON.stringify(JSON.stringify(trees));
   const bpPathsLiteral = JSON.stringify(JSON.stringify({
     ...DEFAULT_AREA_BP_PATHS,
     ...(bpPaths || {}),
@@ -2526,9 +2633,11 @@ import unreal
 
 STREET_SPLINES = json.loads(${jsonLiteral})
 BUILDINGS = json.loads(${buildingJsonLiteral})
+TREES = json.loads(${treeJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
+TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
@@ -2705,10 +2814,38 @@ def create_building_actor(actor_class, row):
     return actor
 
 
+def create_tree_actor(actor_class, row):
+    label = f"{TREE_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('TreeKey', row.get('Name', 'Tree')))}"
+    location = unreal.Vector(
+        float(row["X"]) + WORLD_OFFSET_CM.x,
+        float(row["Y"]) + WORLD_OFFSET_CM.y,
+        float(row.get("Z", 0.0)) + WORLD_OFFSET_CM.z,
+    )
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, unreal.Rotator(0.0, 0.0, 0.0))
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    crown_scale = max(0.01, float(row.get("CrownDiameterCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
+    height_scale = max(0.01, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
+    actor.set_actor_scale3d(unreal.Vector(crown_scale, crown_scale, height_scale))
+    actor.tags = [
+        unreal.Name("tree"),
+        unreal.Name(str(row.get("TreeKey", ""))),
+        unreal.Name(str(row.get("OsmId", ""))),
+        unreal.Name(str(row.get("Type", ""))),
+        unreal.Name(f"HeightCm:{row.get('HeightCm', '')}"),
+        unreal.Name(f"CrownDiameterCm:{row.get('CrownDiameterCm', '')}"),
+        unreal.Name(f"Species:{row.get('Species', '')}"),
+        unreal.Name(f"LeafType:{row.get('LeafType', '')}"),
+    ]
+    return actor
+
+
 def main():
     bp_class_cache = {}
     destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
     destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
+    destroy_existing_actor_with_prefix(f"{TREE_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
@@ -2718,7 +2855,10 @@ def main():
     building_actor_class = load_bp_class(BP_PATHS["building"]) if BUILDINGS else None
     for row in BUILDINGS:
         create_building_actor(building_actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points and {len(BUILDINGS)} buildings")
+    tree_actor_class = load_bp_class(BP_PATHS["tree"]) if TREES else None
+    for row in TREES:
+        create_tree_actor(tree_actor_class, row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points, {len(BUILDINGS)} buildings and {len(TREES)} trees")
 
 
 main()
@@ -3099,7 +3239,7 @@ function exportAreaUnrealPython() {
     const code = buildCompactAreaUnrealPythonScript(payload, bpPaths);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude eingebettet`);
+    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude / ${payload.trees.length} Baeume eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
