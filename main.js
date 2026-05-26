@@ -3282,7 +3282,7 @@ function buildAreaRouteSegments(uePayload, bounds = areaSelectionBounds) {
 
 function stationInBounds(station, bounds) {
   if (!bounds?.isValid?.()) return false;
-  const [lat, lon] = station.wgs84 || [];
+  const [lat, lon] = station.stop_wgs84 || station.wgs84 || [];
   return Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains(L.latLng(lat, lon));
 }
 
@@ -3317,19 +3317,12 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
     Name: stationExportKey(station.name),
     name: station.name,
     key: stationExportKey(station.name),
-    stop_name: station.name,
-    stop_key: stationExportKey(station.name),
     dist_m: datatableNumber(station.dist_m - segmentStartM),
-    stop_dist_m: datatableNumber(station.dist_m - segmentStartM),
     level: station.level ?? null,
     height_m: datatableNumber(station.height_m || 0),
     height_source: station.height_source || "",
-    wgs84: station.wgs84 || null,
-    stop_wgs84: station.stop_wgs84 || station.wgs84 || null,
-    location_cm: station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
-    stop_location_cm: station.stop_location_cm || station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
-    route_location_cm: station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
-    b_is_stop: true,
+    wgs84: station.stop_wgs84 || station.wgs84 || null,
+    location_cm: station.stop_location_cm || station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
   }));
 
   const stationByName = new Map(selectedStations.map((station) => [station.name, station]));
@@ -3348,19 +3341,12 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
         Name: `platform_${stationKey}`,
         UB_SectionType: "platform",
         UB_StationKey: stationKey,
-        UB_StopKey: stationKey,
-        UB_StopName: section.station,
         UB_FromM: datatableNumber(fromM - segmentStartM),
         UB_ToM: datatableNumber(toM - segmentStartM),
         UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
-        UB_StopDistM: datatableNumber(Number(sectionStation?.dist_m ?? section.center_m ?? 0) - segmentStartM),
         UB_Level: sectionStation?.level ?? null,
         UB_HeightM: datatableNumber(sectionStation?.height_m || 0),
         UB_HeightSource: sectionStation?.height_source || "",
-        UB_StopWgs84: sectionStation?.stop_wgs84 || sectionStation?.wgs84 || null,
-        UB_StopLocationCm: sectionStation?.stop_location_cm || sectionStation?.location_cm || null,
-        UB_RouteLocationCm: sectionStation?.location_cm || null,
-        UB_bIsStop: true,
       });
       continue;
     }
