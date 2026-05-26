@@ -3315,8 +3315,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
     const end = Number(station.platform_end_m ?? station.dist_m);
     const stationDist = Number(station.dist_m);
     const overlapsSegment = end >= segmentStartM && start <= segmentEndM;
+    const distanceInSegment = stationDist >= segmentStartM && stationDist <= segmentEndM;
     const stopInSelection = segmentRange?.bounds && stationInBounds(station, segmentRange.bounds);
-    return overlapsSegment || (stopInSelection && stationDist >= segmentStartM - 500 && stationDist <= segmentEndM + 500);
+    return overlapsSegment || distanceInSegment || stopInSelection;
   });
 
   const lineName = line ? transitLineLabel(line) : (uePayload?.ref || "");
@@ -3326,6 +3327,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
     Linien: lineName ? [lineName] : [],
     DistanceAtSpline: datatableNumber(station.dist_m - segmentStartM),
   }));
+  if (!stations.length) {
+    throw new Error(`${uePayload.ref} hat keine Haltestellen im exportierten Bereich.`);
+  }
 
   const stationByName = new Map(selectedStations.map((station) => [station.name, station]));
 
