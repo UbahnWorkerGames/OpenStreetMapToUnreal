@@ -43,6 +43,7 @@ let uploadedJsonData = null;
 const DEFAULT_HALF_LENGTH_M = 65; // 130m Fallback wenn kein platform-Way vorhanden
 const DEFAULT_HALF_WIDTH_M = 2.7; // 5.4m Fallback
 const TRACK_BLEND_M = 30; // Hermite-Blend-Distanz am Bahnsteig-Ein-/Austritt
+const STATION_LEVEL_HEIGHT_M = 4; // Gameplay-Hoehe pro OSM-Ebene
 
 // masterStations: einzige Quelle der Wahrheit für Stationsdaten
 // { name, lat, lon, halfLengthM, halfWidthM, _osmLat?, _osmLon?, _osmHalfLengthM?, _osmHalfWidthM? }
@@ -496,6 +497,40 @@ function getStationName(el) {
   return (el?.tags?.name || el?.tags?.["name:de"] || "").trim();
 }
 
+function parseOsmLevelValue(value) {
+  if (value == null) return null;
+  const text = String(value).trim().replace(",", ".");
+  if (!text) return null;
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stationHeightFromTags(...tagSources) {
+  for (const tags of tagSources) {
+    const level = parseOsmLevelValue(tags?.level);
+    if (level != null) {
+      return {
+        level,
+        heightM: level * STATION_LEVEL_HEIGHT_M,
+        source: "osm_level",
+      };
+    }
+  }
+  for (const tags of tagSources) {
+    const layer = parseOsmLevelValue(tags?.layer);
+    if (layer != null) {
+      return {
+        level: layer,
+        heightM: layer * STATION_LEVEL_HEIGHT_M,
+        source: "osm_layer",
+      };
+    }
+  }
+  return { level: null, heightM: 0, source: "" };
+}
+
 function isStopRole(role) {
   const r = (role || "").toLowerCase();
   return r === "stop" || r === "stop_entry_only" || r === "stop_exit_only";
@@ -521,7 +556,7 @@ function extractStopNodes(relation, elements) {
     const name = getStationName(el);
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    stops.push({ id: el.id, name, lat: el.lat, lon: el.lon });
+    stops.push({ id: el.id, name, lat: el.lat, lon: el.lon, tags: el.tags || {} });
   }
   return stops;
 }
@@ -548,6 +583,7 @@ function buildPlatformIndex(relations, elements) {
       byNorm.set(norm, {
         id,
         name,
+        tags: tagsSource?.tags || {},
         geometry: geometryRaw.map((g) => [g.lat ?? g[0], g.lon ?? g[1]]),
       });
     }
@@ -859,6 +895,9 @@ function buildMasterStatePayload(ref) {
       lon: +s.lon.toFixed(7),
       halfLengthM: +s.halfLengthM.toFixed(2),
       halfWidthM: +s.halfWidthM.toFixed(2),
+      level: s.level ?? null,
+      heightM: +(s.heightM || 0).toFixed(2),
+      heightSource: s.heightSource || "",
     })),
   };
 }
@@ -1457,6 +1496,9 @@ function _renderFromMasterStations(rawTrack, ref, fitView) {
     name: s.name,
     halfLengthM: s.halfLengthM,
     halfWidthM: s.halfWidthM,
+    level: s.level ?? null,
+    heightM: s.heightM || 0,
+    heightSource: s.heightSource || "",
   }));
 
   const finalGeometry = buildFinalTrack(rawTrack, projections);
@@ -1469,6 +1511,9 @@ function _renderFromMasterStations(rawTrack, ref, fitView) {
       lon: p.point[1],
       halfLengthM: p.halfLengthM,
       halfWidthM: p.halfWidthM,
+      level: p.level ?? null,
+      heightM: p.heightM || 0,
+      heightSource: p.heightSource || "",
     }));
 
   const fromTo = lastRelation?.tags
@@ -1638,6 +1683,9 @@ function exportToUnreal(buildOnly = false) {
     name: s.name,
     halfLengthM: s.halfLengthM,
     halfWidthM: s.halfWidthM,
+    level: s.level ?? null,
+    heightM: s.heightM || 0,
+    heightSource: s.heightSource || "",
   }));
 
   const finalGeometry = buildFinalTrack(rawTrack, projections);
@@ -1700,6 +1748,9 @@ function exportToUnreal(buildOnly = false) {
     name: s.name,
     halfLengthM: s.halfLengthM,
     halfWidthM: s.halfWidthM,
+    level: s.level ?? null,
+    heightM: s.heightM || 0,
+    heightSource: s.heightSource || "",
   }));
   const sorted = [...finalStations].sort((a, b) => a.distAlongTrack - b.distAlongTrack);
 
@@ -1731,9 +1782,12 @@ function exportToUnreal(buildOnly = false) {
     const end = moveMeter(s.point, s.tangent, s.halfLengthM);
     return {
       station: s.name,
+      level: s.level ?? null,
+      height_m: +(s.heightM || 0).toFixed(2),
+      height_source: s.heightSource || "",
       corners_cm: buildPlatformPolygon(s.point, s.tangent, -s.halfLengthM, s.halfLengthM, s.halfWidthM)
-        .map((p) => toUEcm(p[0], p[1])),
-      center_line_cm: [toUEcm(start[0], start[1]), toUEcm(end[0], end[1])],
+        .map((p) => toUEcm(p[0], p[1], s.heightM || 0)),
+      center_line_cm: [toUEcm(start[0], start[1], s.heightM || 0), toUEcm(end[0], end[1], s.heightM || 0)],
     };
   });
 
@@ -1813,7 +1867,10 @@ function exportToUnreal(buildOnly = false) {
       platform_end_m: +(s.distAlongTrack + s.halfLengthM).toFixed(2),
       half_length_m: +s.halfLengthM.toFixed(2),
       half_width_m: +s.halfWidthM.toFixed(2),
-      location_cm: toUEcm(s.point[0], s.point[1]),
+      level: s.level ?? null,
+      height_m: +(s.heightM || 0).toFixed(2),
+      height_source: s.heightSource || "",
+      location_cm: toUEcm(s.point[0], s.point[1], s.heightM || 0),
     })),
     sections,
     platform_geometry: platformGeometry,
@@ -1858,6 +1915,9 @@ function exportMaster() {
       lon: +s.lon.toFixed(7),
       halfLengthM: +s.halfLengthM.toFixed(2),
       halfWidthM: +s.halfWidthM.toFixed(2),
+      level: s.level ?? null,
+      heightM: +(s.heightM || 0).toFixed(2),
+      heightSource: s.heightSource || "",
     })),
     // UE-Importer kann direkt diese Felder nutzen (kein separater UE-Export nötig)
     ...uePayload,
@@ -2553,7 +2613,13 @@ function buildDatatablePayloads(uePayload, segmentSelection = null) {
     name: station.name,
     key: stationExportKey(station.name),
     dist_m: datatableNumber(station.dist_m - segmentStartM),
+    level: station.level ?? null,
+    height_m: datatableNumber(station.height_m || 0),
+    height_source: station.height_source || "",
+    location_cm: station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
   }));
+
+  const stationByName = new Map(selectedStations.map((station) => [station.name, station]));
 
   const sections = [];
   let tunnelIndex = 1;
@@ -2563,6 +2629,7 @@ function buildDatatablePayloads(uePayload, segmentSelection = null) {
     if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) continue;
 
     if (section.type === "platform") {
+      const sectionStation = stationByName.get(section.station);
       const stationKey = stationExportKey(section.station);
       sections.push({
         Name: `platform_${stationKey}`,
@@ -2571,6 +2638,9 @@ function buildDatatablePayloads(uePayload, segmentSelection = null) {
         UB_FromM: datatableNumber(fromM - segmentStartM),
         UB_ToM: datatableNumber(toM - segmentStartM),
         UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
+        UB_Level: sectionStation?.level ?? null,
+        UB_HeightM: datatableNumber(sectionStation?.height_m || 0),
+        UB_HeightSource: sectionStation?.height_source || "",
       });
       continue;
     }
@@ -2582,6 +2652,9 @@ function buildDatatablePayloads(uePayload, segmentSelection = null) {
       UB_FromM: datatableNumber(fromM - segmentStartM),
       UB_ToM: datatableNumber(toM - segmentStartM),
       UB_CenterM: 0,
+      UB_Level: null,
+      UB_HeightM: 0,
+      UB_HeightSource: "",
     });
   }
 
@@ -2908,6 +2981,7 @@ function loadFromUploadedData(data, ref) {
       const proj = projectOntoTrack([s.lat, s.lon], rawTrack);
       const platformWay = platformIndex.get(s.name);
       const dims = measurePlatformDimensions(platformWay, proj.point, proj.tangent);
+      const height = stationHeightFromTags(platformWay?.tags, s.tags);
       if (!dims) missingPlatforms.push(s.name);
       const halfLengthM = dims?.halfLengthM ?? DEFAULT_HALF_LENGTH_M;
       const halfWidthM = dims?.halfWidthM ?? DEFAULT_HALF_WIDTH_M;
@@ -2917,11 +2991,17 @@ function loadFromUploadedData(data, ref) {
         lon: s.lon,
         halfLengthM,
         halfWidthM,
+        level: height.level,
+        heightM: height.heightM,
+        heightSource: height.source,
         // Original-OSM-Werte für Zurücksetzen
         _osmLat: s.lat,
         _osmLon: s.lon,
         _osmHalfLengthM: halfLengthM,
         _osmHalfWidthM: halfWidthM,
+        _osmLevel: height.level,
+        _osmHeightM: height.heightM,
+        _osmHeightSource: height.source,
       };
     });
 
@@ -3209,7 +3289,7 @@ async function reloadCurrentFile() {
   }
 }
 
-setStatus("⇣ Overpass oder 📂 Master laden.");
+setStatus("Bereich wählen und OSM Bereich laden oder Master laden.");
 
 // ─── Edit-Panel Handler ───────────────────────────────────────────────────────
 
@@ -3243,6 +3323,9 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
     ms.lon = ms._osmLon ?? ms.lon;
     ms.halfLengthM = ms._osmHalfLengthM ?? DEFAULT_HALF_LENGTH_M;
     ms.halfWidthM = ms._osmHalfWidthM ?? DEFAULT_HALF_WIDTH_M;
+    ms.level = ms._osmLevel ?? null;
+    ms.heightM = ms._osmHeightM ?? 0;
+    ms.heightSource = ms._osmHeightSource ?? "";
   }
   document.getElementById("edit-panel").hidden = true;
   selectedStation = null;
