@@ -8,6 +8,13 @@ import JSZip from "jszip";
  */
 
 const LINES = ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "U9"];
+const TRANSIT_ROUTE_MODES = {
+  subway: { label: "U-Bahn", category: "rail_subway" },
+  tram: { label: "Tram", category: "rail_tram" },
+  train: { label: "Bahn", category: "rail_train" },
+  light_rail: { label: "Light Rail", category: "rail_train" },
+  bus: { label: "Bus", category: "bus" },
+};
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -49,6 +56,7 @@ const STATION_LEVEL_HEIGHT_M = 4; // Gameplay-Hoehe pro OSM-Ebene
 // { name, lat, lon, halfLengthM, halfWidthM, _osmLat?, _osmLon?, _osmHalfLengthM?, _osmHalfWidthM? }
 let masterStations = null;
 let lastRelation = null; // aktuelle OSM-Relation (für Richtungsanzeige)
+let currentRouteMode = "subway";
 let editModeActive = false;
 let splineEditMode = false;
 let customControlPoints = null; // [lat, lon][] – überschreibt Overpass-Mittellinie
@@ -102,6 +110,7 @@ const AREA_STYLE = {
   rail_tram: { color: "#16a34a", weight: 3 },
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
+  bus: { color: "#0891b2", weight: 2.5 },
   building: { color: "#64748b", weight: 1.2 },
 };
 
@@ -124,6 +133,7 @@ const AREA_LAYER_LABELS = {
   rail_tram: "Tram",
   rail_train: "Zug",
   rail_subway: "U-Bahn",
+  bus: "Bus",
   building: "Gebaeude",
 };
 
@@ -139,7 +149,7 @@ let areaDraftRect = null;
 let areaFeatures = [];
 let areaCache = null;
 let datatableAreaLines = [];
-let detectedAreaSubwayLines = [];
+let detectedAreaTransitLines = [];
 
 function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
@@ -447,7 +457,7 @@ function extractTrackSegments(relation, elements = []) {
   );
 
   return (relation.members || [])
-    .filter((m) => m.type === "way" && m.role === "")
+    .filter((m) => m.type === "way" && !isPlatformRole(m.role))
     .map((m) => {
       // Fall A: geometry direkt im Member (ältere/andere Overpass-Ausgaben)
       if (Array.isArray(m.geometry) && m.geometry.length >= 2) {
@@ -791,11 +801,11 @@ function buildFinalTrack(rawTrack, stationProjections) {
 
 // ─── Datenladen ───────────────────────────────────────────────────────────────
 
-function getSubwayRelationsForRef(data, ref) {
+function getRouteRelationsForRef(data, ref, routeMode = "subway") {
   return (data.elements || []).filter(
     (el) =>
       el.type === "relation" &&
-      el.tags?.route === "subway" &&
+      el.tags?.route === routeMode &&
       el.tags?.ref === ref,
   );
 }
@@ -915,6 +925,7 @@ function buildMasterStatePayload(ref) {
 }
 
 function cacheMasterForRef(ref) {
+  if (currentRouteMode !== "subway") return;
   if (!ref) return;
   const payload = buildMasterStatePayload(ref);
   if (!payload) return;
@@ -922,6 +933,7 @@ function cacheMasterForRef(ref) {
 }
 
 function scheduleCachePersist(ref) {
+  if (currentRouteMode !== "subway") return;
   if (!ref) return;
   if (persistCacheTimer) clearTimeout(persistCacheTimer);
   persistCacheTimer = setTimeout(() => {
@@ -1004,11 +1016,21 @@ function areaOverpassFilterForCategory(category) {
       return 'way["railway"~"^(rail|light_rail)$"]';
     case "rail_subway":
       return 'way["railway"="subway"]';
+    case "bus":
+      return null;
     case "building":
       return 'way["building"]';
     default:
       return null;
   }
+}
+
+function areaRouteModesForCategories(categories) {
+  const modes = [];
+  for (const [mode, config] of Object.entries(TRANSIT_ROUTE_MODES)) {
+    if (categories.includes(config.category)) modes.push(mode);
+  }
+  return modes;
 }
 
 function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()) {
@@ -1023,13 +1045,13 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
     .filter(Boolean)
     .map((filter) => `  ${filter}(${bbox});`)
     .join("\n");
-  const relationClauses = categories.includes("rail_subway")
-    ? `\n  relation["type"="route"]["route"="subway"](${bbox});`
-    : "";
-  if (!clauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
+  const relationClauses = areaRouteModesForCategories(categories)
+    .map((mode) => `  relation["type"="route"]["route"="${mode}"](${bbox});`)
+    .join("\n");
+  if (!clauses && !relationClauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
   return `[out:json][timeout:120];
 (
-${clauses}${relationClauses}
+${clauses}${relationClauses ? `\n${relationClauses}` : ""}
 );
 out geom(${bbox});`;
 }
@@ -1394,6 +1416,14 @@ function renderAreaFeatures() {
   }
 }
 
+function renderAreaTransitLinesOnlyStatus() {
+  areaRawLayer.clearLayers();
+  areaProcessedLayer.clearLayers();
+  updateDatatableAreaLineSelection();
+  const lines = datatableAreaLines.length ? datatableAreaLines.map(transitLineLabel).join(", ") : "keine";
+  setStatus(`Bereich geladen: keine sichtbaren Segmente · ÖPNV-Linien: ${lines}`);
+}
+
 function formatAreaContentStatus(counts, visibleCount) {
   const selectedCategories = getSelectedAreaCategories();
   const selectedLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
@@ -1401,10 +1431,10 @@ function formatAreaContentStatus(counts, visibleCount) {
     .filter(([, count]) => count > 0)
     .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
     .join(" | ");
-  const lines = datatableAreaLines.length ? datatableAreaLines.join(", ") : "keine";
+  const lines = datatableAreaLines.length ? datatableAreaLines.map(transitLineLabel).join(", ") : "keine";
   return [
     `Bereich geladen: ${visibleCount}/${areaFeatures.length} sichtbare Segmente`,
-    `U-Bahn-Linien: ${lines}`,
+    `ÖPNV-Linien: ${lines}`,
     `Inhalt: ${content || "nichts gefunden"}`,
     `Layer: ${selectedLabels || "keine"}`,
   ].join(" · ");
@@ -2745,46 +2775,58 @@ function initAreaBpPathInputs() {
   }
 }
 
-function extractSubwayRefsFromText(value) {
+function encodeTransitLine(line) {
+  return `${line.route}:${line.ref}`;
+}
+
+function transitLineLabel(line) {
+  return `${TRANSIT_ROUTE_MODES[line.route]?.label || line.route} ${line.ref}`;
+}
+
+function extractTransitRefsFromText(value) {
   const refs = new Set();
   const text = String(value || "").toUpperCase();
-  for (const match of text.matchAll(/\bU\s*([1-9])\b/g)) refs.add(`U${match[1]}`);
+  for (const match of text.matchAll(/\b(?:U\s*)?([A-Z]?\d{1,3}[A-Z]?)\b/g)) refs.add(match[0].replace(/\s+/g, ""));
   return refs;
 }
 
-function areaSubwayRefs(feature) {
-  if (feature?.category !== "rail_subway") return [];
+function areaFeatureTransitLines(feature) {
   const tags = feature.tags || {};
-  const refs = new Set();
+  const route = Object.entries(TRANSIT_ROUTE_MODES).find(([, config]) => config.category === feature?.category)?.[0];
+  if (!route) return [];
   for (const key of ["ref", "route_ref", "line", "lines", "name", "description"]) {
-    for (const ref of extractSubwayRefsFromText(tags[key])) refs.add(ref);
+    const refs = [...extractTransitRefsFromText(tags[key])];
+    if (refs.length) return refs.map((ref) => ({ route, ref }));
   }
-  return [...refs].filter((ref) => LINES.includes(ref));
+  return [];
 }
 
-function overpassSubwayRouteRefs(data) {
-  const refs = new Set();
+function overpassTransitRouteLines(data) {
+  const lines = new Map();
   for (const element of data?.elements || []) {
     const tags = element.tags || {};
-    if (element.type !== "relation" || tags.type !== "route" || tags.route !== "subway") continue;
+    if (element.type !== "relation" || tags.type !== "route" || !TRANSIT_ROUTE_MODES[tags.route]) continue;
     for (const key of ["ref", "route_ref", "line", "lines", "name"]) {
-      for (const ref of extractSubwayRefsFromText(tags[key])) refs.add(ref);
+      for (const ref of extractTransitRefsFromText(tags[key])) {
+        const line = { route: tags.route, ref };
+        lines.set(encodeTransitLine(line), line);
+      }
     }
   }
-  return LINES.filter((line) => refs.has(line));
+  return [...lines.values()].sort((a, b) => transitLineLabel(a).localeCompare(transitLineLabel(b), "de"));
 }
 
-function getAreaSubwayLines() {
-  const refs = new Set();
-  for (const ref of detectedAreaSubwayLines) refs.add(ref);
+function getAreaTransitLines() {
+  const lines = new Map();
+  for (const line of detectedAreaTransitLines) lines.set(encodeTransitLine(line), line);
   for (const feature of areaFeatures) {
-    for (const ref of areaSubwayRefs(feature)) refs.add(ref);
+    for (const line of areaFeatureTransitLines(feature)) lines.set(encodeTransitLine(line), line);
   }
-  return LINES.filter((line) => refs.has(line));
+  return [...lines.values()].sort((a, b) => transitLineLabel(a).localeCompare(transitLineLabel(b), "de"));
 }
 
 function updateDatatableAreaLineSelection() {
-  datatableAreaLines = getAreaSubwayLines();
+  datatableAreaLines = getAreaTransitLines();
   const lineSelect = document.getElementById("datatable-line-select");
   if (!lineSelect) return;
 
@@ -2794,27 +2836,27 @@ function updateDatatableAreaLineSelection() {
   if (!datatableAreaLines.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = areaFeatures.length ? "keine U-Bahn-Linie im Bereich" : "erst Bereich laden";
+    option.textContent = areaFeatures.length ? "keine ÖPNV-Linie im Bereich" : "erst Bereich laden";
     lineSelect.appendChild(option);
     return;
   }
 
   const allOption = document.createElement("option");
   allOption.value = "__all__";
-  allOption.textContent = `alle im Bereich (${datatableAreaLines.join(", ")})`;
+  allOption.textContent = `alle im Bereich (${datatableAreaLines.map(transitLineLabel).join(", ")})`;
   lineSelect.appendChild(allOption);
 
   for (const line of datatableAreaLines) {
     const option = document.createElement("option");
-    option.value = line;
-    option.textContent = line;
+    option.value = encodeTransitLine(line);
+    option.textContent = transitLineLabel(line);
     lineSelect.appendChild(option);
   }
 
-  if (datatableAreaLines.includes(previous) || previous === "__all__") {
+  if (datatableAreaLines.some((line) => encodeTransitLine(line) === previous) || previous === "__all__") {
     lineSelect.value = previous;
-  } else if (datatableAreaLines.includes(lastLoadData?.ref)) {
-    lineSelect.value = lastLoadData.ref;
+  } else if (lastLoadData && datatableAreaLines.some((line) => line.route === lastLoadData.routeMode && line.ref === lastLoadData.ref)) {
+    lineSelect.value = `${lastLoadData.routeMode}:${lastLoadData.ref}`;
   } else {
     lineSelect.value = "__all__";
   }
@@ -2917,29 +2959,32 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
   return { stations, sections, suffix };
 }
 
-async function ensureLineLoadedForDatatableExport(ref) {
-  if (lastLoadData?.ref === ref && masterStations?.length) return;
-  if (loadCachedMasterForRef(ref)) return;
+async function ensureLineLoadedForDatatableExport(line) {
+  const { ref, route } = line;
+  if (lastLoadData?.ref === ref && lastLoadData?.routeMode === route && masterStations?.length) return;
+  if (route === "subway" && loadCachedMasterForRef(ref)) return;
   if (uploadedJsonData || loadCachedOverpassDataset()) {
-    loadLine(ref);
-    if (lastLoadData?.ref === ref && masterStations?.length) return;
+    loadLine(ref, route);
+    if (lastLoadData?.ref === ref && lastLoadData?.routeMode === route && masterStations?.length) return;
   }
-  const imported = await importFromOverpass(ref);
-  if (!imported || lastLoadData?.ref !== ref || !masterStations?.length) {
-    throw new Error(`${ref} konnte nicht fuer den Datatable-Export geladen werden.`);
+  const imported = await importFromOverpass(ref, route);
+  if (!imported || lastLoadData?.ref !== ref || lastLoadData?.routeMode !== route || !masterStations?.length) {
+    throw new Error(`${transitLineLabel(line)} konnte nicht fuer den Datatable-Export geladen werden.`);
   }
 }
 
 async function exportDatatableZip() {
   const selectedExportLine = document.getElementById("datatable-line-select")?.value || "";
-  const availableLines = datatableAreaLines.length ? datatableAreaLines : getAreaSubwayLines();
+  const availableLines = datatableAreaLines.length ? datatableAreaLines : getAreaTransitLines();
   if (!availableLines.length) {
-    setStatus("Erst einen Bereich mit U-Bahn-Linien laden.", true);
+    setStatus("Erst einen Bereich mit ÖPNV-Linien laden.", true);
     return;
   }
 
-  const checked = selectedExportLine === "__all__" ? availableLines : [selectedExportLine].filter(Boolean);
-  if (!checked.length || checked.some((line) => !availableLines.includes(line))) {
+  const checked = selectedExportLine === "__all__"
+    ? availableLines
+    : availableLines.filter((line) => encodeTransitLine(line) === selectedExportLine);
+  if (!checked.length) {
     setStatus("Eine Linie aus dem geladenen Bereich waehlen.", true);
     return;
   }
@@ -2947,25 +2992,26 @@ async function exportDatatableZip() {
   const zip = new JSZip();
 
   try {
-    setStatus(`Erzeuge Datatable-ZIP fuer Bereichslinien ${checked.join(", ")} ...`);
-    for (const ref of checked) {
-      await ensureLineLoadedForDatatableExport(ref);
+    setStatus(`Erzeuge Datatable-ZIP fuer Bereichslinien ${checked.map(transitLineLabel).join(", ")} ...`);
+    for (const line of checked) {
+      const { ref } = line;
+      await ensureLineLoadedForDatatableExport(line);
       const uePayload = exportToUnreal(true);
-      if (!uePayload) throw new Error(`${ref} hat keinen UE-Payload.`);
+      if (!uePayload) throw new Error(`${transitLineLabel(line)} hat keinen UE-Payload.`);
       const areaSegment = buildAreaRouteSegment(uePayload);
-      if (!areaSegment) throw new Error(`${ref} verlaeuft nicht durch den aktuell markierten Bereich.`);
+      if (!areaSegment) throw new Error(`${transitLineLabel(line)} verlaeuft nicht durch den aktuell markierten Bereich.`);
       const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment);
-      const folderName = `${ref}${suffix}`;
+      const folderName = `${line.route}_${ref}${suffix}`;
       const folder = zip.folder(folderName);
-      folder.file(`${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
-      folder.file(`${ref}${suffix}_sections.json`, JSON.stringify(sections, null, "\t"));
+      folder.file(`${line.route}_${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
+      folder.file(`${line.route}_${ref}${suffix}_sections.json`, JSON.stringify(sections, null, "\t"));
     }
 
     const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
-    const suffix = checked.length === 1 ? checked[0] : "selection";
+    const suffix = checked.length === 1 ? encodeTransitLine(checked[0]).replace(":", "_") : "selection";
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `ubahn-datatables-${suffix}.zip`;
+    a.download = `transit-datatables-${suffix}.zip`;
     a.click();
     URL.revokeObjectURL(a.href);
     setStatus(`Datatable-ZIP exportiert: ${checked.length} Linie(n), je stations + sections.`);
@@ -3174,30 +3220,31 @@ function toggleEditMode() {
   rebuildAndDraw();
 }
 
-function loadFromUploadedData(data, ref) {
-  const isNewLoad = !lastLoadData || lastLoadData.ref !== ref || lastLoadData.data !== data;
+function loadFromUploadedData(data, ref, routeMode = currentRouteMode || "subway") {
+  currentRouteMode = routeMode;
+  const isNewLoad = !lastLoadData || lastLoadData.ref !== ref || lastLoadData.routeMode !== routeMode || lastLoadData.data !== data;
 
   // Linienwechsel → masterStations neu aus Overpass berechnen
-  if (lastLoadData && lastLoadData.ref !== ref) {
+  if (lastLoadData && (lastLoadData.ref !== ref || lastLoadData.routeMode !== routeMode)) {
     masterStations = null;
     lastRelation = null;
   }
 
-  lastLoadData = { data, ref };
+  lastLoadData = { data, ref, routeMode };
 
   // ── Track ermitteln ───────────────────────────────────────────────────────
   let rawTrack;
   if (customControlPoints && customControlPoints.length >= 2) {
     rawTrack = catmullRomSpline(customControlPoints);
   } else if (data) {
-    const relations = getSubwayRelationsForRef(data, ref);
+    const relations = getRouteRelationsForRef(data, ref, currentRouteMode);
     if (!relations.length) {
       // Wenn JSON die Linie nicht enthält, aber Master-Cache existiert: daraus laden.
-      if (loadCachedMasterForRef(ref)) {
+      if (currentRouteMode === "subway" && loadCachedMasterForRef(ref)) {
         setStatus(`Linie ${ref} aus Master-Cache geladen (JSON ohne Relation).`);
         return;
       }
-      setStatus(`Keine U-Bahn-Relation für ${ref} in der JSON.`, true);
+      setStatus(`Keine ${TRANSIT_ROUTE_MODES[currentRouteMode]?.label || currentRouteMode}-Relation fuer ${ref} in der JSON.`, true);
       clearRoute();
       return;
     }
@@ -3219,7 +3266,7 @@ function loadFromUploadedData(data, ref) {
       setStatus("Keine Stationsdaten und keine Overpass-JSON.", true);
       return;
     }
-    const relations = getSubwayRelationsForRef(data, ref);
+    const relations = getRouteRelationsForRef(data, ref, currentRouteMode);
     const relation = pickRelationWithMostStops(relations, data.elements || []);
     if (!relation) {
       setStatus("Keine passende Relation.", true);
@@ -3277,25 +3324,26 @@ function loadFromUploadedData(data, ref) {
   _renderFromMasterStations(rawTrack, ref, isNewLoad);
 }
 
-function loadLine(ref) {
+function loadLine(ref, routeMode = currentRouteMode || "subway") {
+  currentRouteMode = routeMode;
   setStatus("Lade …");
   setDirectionText("");
 
   // Falls bereits passender Master-State im Speicher ist
-  if (masterStations && lastLoadData?.ref === ref) {
-    lastLoadData = { data: null, ref };
+  if (masterStations && lastLoadData?.ref === ref && lastLoadData?.routeMode === routeMode) {
+    lastLoadData = { data: null, ref, routeMode };
     rebuildAndDraw();
     return;
   }
 
   // Cache-first: eigener Master-State (inkl. Edits)
-  if (loadCachedMasterForRef(ref)) {
+  if (routeMode === "subway" && loadCachedMasterForRef(ref)) {
     setStatus(`Linie ${ref} aus Cache geladen.`);
     return;
   }
 
   if (uploadedJsonData) {
-    loadFromUploadedData(uploadedJsonData, ref);
+    loadFromUploadedData(uploadedJsonData, ref, routeMode);
     return;
   }
 
@@ -3303,7 +3351,7 @@ function loadLine(ref) {
   const cachedOverpass = loadCachedOverpassDataset();
   if (cachedOverpass) {
     uploadedJsonData = cachedOverpass;
-    loadFromUploadedData(uploadedJsonData, ref);
+    loadFromUploadedData(uploadedJsonData, ref, routeMode);
     return;
   }
 
@@ -3313,26 +3361,27 @@ function loadLine(ref) {
   return;
 }
 
-function buildOverpassQuery(ref) {
+function buildOverpassQuery(ref, routeMode = "subway") {
   return `[out:json][timeout:360];
 area["name"="Berlin"]["boundary"="administrative"]->.searchArea;
 (
-  relation["type"="route"]["route"="subway"]["ref"="${ref}"](area.searchArea);
+  relation["type"="route"]["route"="${routeMode}"]["ref"="${ref}"](area.searchArea);
 );
 out body;
 >;
 out geom;`;
 }
 
-async function importFromOverpass(ref) {
+async function importFromOverpass(ref, routeMode = "subway") {
   try {
-    setStatus(`Lade ${ref} direkt von Overpass …`);
+    const modeLabel = TRANSIT_ROUTE_MODES[routeMode]?.label || routeMode;
+    setStatus(`Lade ${modeLabel} ${ref} direkt von Overpass …`);
     setDirectionText("");
 
     const response = await fetch(OVERPASS_API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildOverpassQuery(ref),
+      body: buildOverpassQuery(ref, routeMode),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -3350,7 +3399,7 @@ async function importFromOverpass(ref) {
     lastComputedCenterline = null;
     masterStations = null;
     lastRelation = null;
-    loadLine(ref);
+    loadLine(ref, routeMode);
     return true;
   } catch (error) {
     setStatus(`Overpass-Direktimport fehlgeschlagen: ${error.message}`, true);
@@ -3389,8 +3438,9 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
     if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
       areaFeatures = areaCache.features;
-      detectedAreaSubwayLines = areaCache.subwayLines || [];
-      renderAreaFeatures();
+      detectedAreaTransitLines = areaCache.transitLines || [];
+      if (areaFeatures.length) renderAreaFeatures();
+      else renderAreaTransitLinesOnlyStatus();
       return true;
     }
 
@@ -3408,17 +3458,18 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       throw new Error("Antwort ohne elements");
     }
 
-    detectedAreaSubwayLines = overpassSubwayRouteRefs(data);
+    detectedAreaTransitLines = overpassTransitRouteLines(data);
     areaFeatures = buildAreaFeatures(data, bounds);
-    areaCache = { key: cacheKey, bounds, features: areaFeatures, subwayLines: detectedAreaSubwayLines };
-    if (!areaFeatures.length) {
+    areaCache = { key: cacheKey, bounds, features: areaFeatures, transitLines: detectedAreaTransitLines };
+    if (!areaFeatures.length && !detectedAreaTransitLines.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
       updateDatatableAreaLineSelection();
-      setStatus("Keine passenden Strassen- oder Schienen-Ways im Bereich gefunden.", true);
+      setStatus("Keine passenden OSM-Daten oder ÖPNV-Linien im Bereich gefunden.", true);
       return false;
     }
-    renderAreaFeatures();
+    if (areaFeatures.length) renderAreaFeatures();
+    else renderAreaTransitLinesOnlyStatus();
     return true;
   } catch (error) {
     setStatus(`Bereichsimport fehlgeschlagen: ${error.message}`, true);
