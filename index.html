@@ -418,6 +418,14 @@
         <button type="button" class="btn-clear" id="btn-area-load" title="Straßen, Schienen, Bus- und Bahnlinien im markierten Bereich laden">Bereich laden</button>
       </div>
       <div class="row" style="margin-top: 6px">
+        <label for="area-selection-preset">Selection</label>
+        <select id="area-selection-preset" aria-label="Gespeicherte Selection">
+          <option value="">keine gespeichert</option>
+        </select>
+        <button type="button" class="btn-clear" id="btn-area-save-selection" title="Aktuellen Bereich und Layer speichern">Save</button>
+        <button type="button" class="btn-clear" id="btn-area-delete-selection" title="Gespeicherte Selection löschen">Del</button>
+      </div>
+      <div class="row" style="margin-top: 6px">
         <label for="postal-code-input">PLZ</label>
         <input id="postal-code-input" type="search" inputmode="numeric" autocomplete="postal-code" placeholder="10115" style="width: 6.5rem">
         <button type="button" class="btn-clear" id="btn-postal-code">Ort</button>

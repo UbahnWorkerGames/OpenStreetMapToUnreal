@@ -72,6 +72,7 @@ const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
 const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
+const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 const DEFAULT_AREA_BP_PATHS = {
   tunnel: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
@@ -164,6 +165,117 @@ function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
     .filter(([, visible]) => visible)
     .map(([category]) => category);
+}
+
+function setSelectedAreaCategories(categories) {
+  const selected = new Set(categories || []);
+  for (const key of areaLayerVisibility.keys()) areaLayerVisibility.set(key, selected.has(key));
+  document.querySelectorAll("[data-area-layer]").forEach((input) => {
+    input.checked = selected.has(input.dataset.areaLayer);
+  });
+}
+
+function readSavedAreaSelections() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(AREA_SELECTIONS_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((entry) => entry?.name && entry?.bounds) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedAreaSelections(selections) {
+  window.localStorage.setItem(AREA_SELECTIONS_STORAGE_KEY, JSON.stringify(selections));
+}
+
+function areaSelectionToPlainBounds(bounds) {
+  return {
+    south: +bounds.getSouth().toFixed(7),
+    west: +bounds.getWest().toFixed(7),
+    north: +bounds.getNorth().toFixed(7),
+    east: +bounds.getEast().toFixed(7),
+  };
+}
+
+function plainBoundsToLatLngBounds(bounds) {
+  if (!bounds) return null;
+  const south = Number(bounds.south);
+  const west = Number(bounds.west);
+  const north = Number(bounds.north);
+  const east = Number(bounds.east);
+  if (![south, west, north, east].every(Number.isFinite)) return null;
+  return L.latLngBounds([south, west], [north, east]);
+}
+
+function refreshSavedAreaSelectionSelect(selectedName = "") {
+  const select = document.getElementById("area-selection-preset");
+  if (!select) return;
+  const selections = readSavedAreaSelections().sort((a, b) => a.name.localeCompare(b.name, "de"));
+  select.textContent = "";
+  if (!selections.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "keine gespeichert";
+    select.appendChild(option);
+    return;
+  }
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Selection laden...";
+  select.appendChild(empty);
+  for (const selection of selections) {
+    const option = document.createElement("option");
+    option.value = selection.name;
+    option.textContent = selection.name;
+    select.appendChild(option);
+  }
+  select.value = selectedName;
+}
+
+function saveCurrentAreaSelection() {
+  if (!areaSelectionBounds?.isValid?.()) {
+    setStatus("Erst einen Bereich auf der Karte markieren.", true);
+    return;
+  }
+  const fallback = `Selection ${new Date().toLocaleString("de-DE")}`;
+  const name = window.prompt("Name der Selection", fallback)?.trim();
+  if (!name) return;
+  const selections = readSavedAreaSelections().filter((entry) => entry.name !== name);
+  selections.push({
+    name,
+    bounds: areaSelectionToPlainBounds(areaSelectionBounds),
+    layers: getSelectedAreaCategories(),
+    savedAt: new Date().toISOString(),
+  });
+  writeSavedAreaSelections(selections);
+  refreshSavedAreaSelectionSelect(name);
+  setStatus(`Selection gespeichert: ${name}`);
+}
+
+function loadSavedAreaSelection(name) {
+  const selection = readSavedAreaSelections().find((entry) => entry.name === name);
+  if (!selection) return;
+  const bounds = plainBoundsToLatLngBounds(selection.bounds);
+  if (!bounds?.isValid?.()) {
+    setStatus(`Selection ist ungueltig: ${name}`, true);
+    return;
+  }
+  setSelectedAreaCategories(selection.layers || []);
+  setAreaSelectionBounds(bounds, `Selection geladen (${name})`);
+  map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
+}
+
+function deleteSavedAreaSelection() {
+  const select = document.getElementById("area-selection-preset");
+  const name = select?.value || "";
+  if (!name) {
+    setStatus("Keine gespeicherte Selection gewaehlt.", true);
+    return;
+  }
+  const selections = readSavedAreaSelections().filter((entry) => entry.name !== name);
+  writeSavedAreaSelections(selections);
+  refreshSavedAreaSelectionSelect();
+  setStatus(`Selection geloescht: ${name}`);
 }
 
 function areaBoundsCacheKey(bounds, categories = getSelectedAreaCategories()) {
@@ -2001,37 +2113,7 @@ function exportToUnreal(buildOnly = false) {
     ];
   }
 
-  // ── Kontroll-Spline mit Tangenten ─────────────────────────────────────────
-  const pts = orientedCtrlPts.map((p) => toUEcm(p[0], p[1]));
-  const n = pts.length;
-  const splinePoints = pts.map((p, i) => {
-    const prev = pts[Math.max(0, i - 1)];
-    const next = pts[Math.min(n - 1, i + 1)];
-    const tx =
-      i === 0 ? next[0] - p[0] : i === n - 1 ? p[0] - prev[0] : 0.5 * (next[0] - prev[0]);
-    const ty =
-      i === 0 ? next[1] - p[1] : i === n - 1 ? p[1] - prev[1] : 0.5 * (next[1] - prev[1]);
-    return {
-      location: p,
-      arrive_tangent: [+tx.toFixed(1), +ty.toFixed(1), 0],
-      leave_tangent: [+tx.toFixed(1), +ty.toFixed(1), 0],
-    };
-  });
-
-  // ── Finale Route exakt wie im Web als dichte Punktfolge ───────────────────
-  const routePoints = [];
-  let routeCum = 0;
-  for (let i = 0; i < finalTrack.length; i++) {
-    if (i > 0) routeCum += haversineM(finalTrack[i - 1], finalTrack[i]);
-    routePoints.push({
-      index: i,
-      dist_m: +routeCum.toFixed(2),
-      wgs84: [+finalTrack[i][0].toFixed(7), +finalTrack[i][1].toFixed(7)],
-      pos_cm: toUEcm(finalTrack[i][0], finalTrack[i][1]),
-    });
-  }
-
-  // ── Stationen auf finale Web-Route projizieren ───────────────────────────
+  // Stationen auf finale Web-Route projizieren, danach Hoehen entlang der Route interpolieren.
   const finalStations = masterStations.map((s) => ({
     ...projectOntoTrack([s.lat, s.lon], finalTrack),
     name: s.name,
@@ -2045,6 +2127,65 @@ function exportToUnreal(buildOnly = false) {
   }));
   const sorted = [...finalStations].sort((a, b) => a.distAlongTrack - b.distAlongTrack);
 
+  const heightAnchors = [
+    { distM: 0, heightM: 0 },
+    ...sorted.map((s) => ({ distM: s.distAlongTrack, heightM: s.heightM || 0 })),
+    { distM: finalRouteLengthM, heightM: 0 },
+  ]
+    .filter((anchor) => Number.isFinite(anchor.distM) && Number.isFinite(anchor.heightM))
+    .sort((a, b) => a.distM - b.distM);
+
+  function heightAtDistanceM(distM) {
+    if (!heightAnchors.length) return 0;
+    if (distM <= heightAnchors[0].distM) return heightAnchors[0].heightM;
+    for (let index = 0; index < heightAnchors.length - 1; index += 1) {
+      const a = heightAnchors[index];
+      const b = heightAnchors[index + 1];
+      if (distM > b.distM) continue;
+      const span = b.distM - a.distM;
+      if (span <= 0.001) return b.heightM;
+      const t = (distM - a.distM) / span;
+      return a.heightM + (b.heightM - a.heightM) * t;
+    }
+    return heightAnchors.at(-1).heightM;
+  }
+
+  // ── Kontroll-Spline mit Tangenten ─────────────────────────────────────────
+  const pts = orientedCtrlPts.map((p) => {
+    const proj = projectOntoTrack(p, finalTrack);
+    return toUEcm(p[0], p[1], heightAtDistanceM(proj.distAlongTrack));
+  });
+  const n = pts.length;
+  const splinePoints = pts.map((p, i) => {
+    const prev = pts[Math.max(0, i - 1)];
+    const next = pts[Math.min(n - 1, i + 1)];
+    const tx =
+      i === 0 ? next[0] - p[0] : i === n - 1 ? p[0] - prev[0] : 0.5 * (next[0] - prev[0]);
+    const ty =
+      i === 0 ? next[1] - p[1] : i === n - 1 ? p[1] - prev[1] : 0.5 * (next[1] - prev[1]);
+    const tz =
+      i === 0 ? next[2] - p[2] : i === n - 1 ? p[2] - prev[2] : 0.5 * (next[2] - prev[2]);
+    return {
+      location: p,
+      arrive_tangent: [+tx.toFixed(1), +ty.toFixed(1), +tz.toFixed(1)],
+      leave_tangent: [+tx.toFixed(1), +ty.toFixed(1), +tz.toFixed(1)],
+    };
+  });
+
+  // ── Finale Route exakt wie im Web als dichte Punktfolge ───────────────────
+  const routePoints = [];
+  let routeCum = 0;
+  for (let i = 0; i < finalTrack.length; i++) {
+    if (i > 0) routeCum += haversineM(finalTrack[i - 1], finalTrack[i]);
+    routePoints.push({
+      index: i,
+      dist_m: +routeCum.toFixed(2),
+      height_m: +heightAtDistanceM(routeCum).toFixed(2),
+      wgs84: [+finalTrack[i][0].toFixed(7), +finalTrack[i][1].toFixed(7)],
+      pos_cm: toUEcm(finalTrack[i][0], finalTrack[i][1], heightAtDistanceM(routeCum)),
+    });
+  }
+
   // ── Sections: tunnel / platform auf Basis der finalen Route ──────────────
   const sections = [];
   let cursor = 0;
@@ -2053,7 +2194,14 @@ function exportToUnreal(buildOnly = false) {
     const pEnd = +(Math.min(finalRouteLengthM, s.distAlongTrack + s.halfLengthM)).toFixed(2);
 
     if (pStart > cursor + 0.1) {
-      sections.push({ type: "tunnel", from_m: +cursor.toFixed(2), to_m: pStart });
+      sections.push({
+        type: "tunnel",
+        from_m: +cursor.toFixed(2),
+        to_m: pStart,
+        from_height_m: +heightAtDistanceM(cursor).toFixed(2),
+        to_height_m: +heightAtDistanceM(pStart).toFixed(2),
+        center_height_m: +heightAtDistanceM((cursor + pStart) * 0.5).toFixed(2),
+      });
     }
     sections.push({
       type: "platform",
@@ -2061,11 +2209,21 @@ function exportToUnreal(buildOnly = false) {
       from_m: pStart,
       to_m: pEnd,
       center_m: +s.distAlongTrack.toFixed(2),
+      from_height_m: +(s.heightM || 0).toFixed(2),
+      to_height_m: +(s.heightM || 0).toFixed(2),
+      center_height_m: +(s.heightM || 0).toFixed(2),
     });
     cursor = pEnd;
   }
   if (cursor < finalRouteLengthM - 0.1) {
-    sections.push({ type: "tunnel", from_m: +cursor.toFixed(2), to_m: +finalRouteLengthM.toFixed(2) });
+    sections.push({
+      type: "tunnel",
+      from_m: +cursor.toFixed(2),
+      to_m: +finalRouteLengthM.toFixed(2),
+      from_height_m: +heightAtDistanceM(cursor).toFixed(2),
+      to_height_m: +heightAtDistanceM(finalRouteLengthM).toFixed(2),
+      center_height_m: +heightAtDistanceM((cursor + finalRouteLengthM) * 0.5).toFixed(2),
+    });
   }
 
   const platformGeometry = sorted.map((s) => {
@@ -3202,6 +3360,8 @@ def add_component_subobject(blueprint, component_class, component_name):
     handle = result[0] if isinstance(result, tuple) else result
     subsystem.rename_subobject(handle, unreal.Text(component_name))
     data = unreal.SubobjectDataBlueprintFunctionLibrary.get_data(handle)
+    if hasattr(unreal.SubobjectDataBlueprintFunctionLibrary, "get_associated_object"):
+        return unreal.SubobjectDataBlueprintFunctionLibrary.get_associated_object(data)
     return unreal.SubobjectDataBlueprintFunctionLibrary.get_object(data)
 
 
@@ -3236,6 +3396,13 @@ def configure_mesh_blueprint(blueprint, kind):
         component.set_editor_property("relative_scale3d", unreal.Vector(1.0, 1.0, 1.5))
 
 
+def compile_blueprint_if_available(blueprint):
+    if hasattr(unreal, "BlueprintEditorLibrary"):
+        unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+        return
+    log(f"Compile API not available, saving without explicit compile: {blueprint.get_name()}")
+
+
 def setup_blueprint(kind, asset_path):
     package_path, asset_name, package_asset = normalize_asset_path(asset_path)
     blueprint, created = create_actor_blueprint(package_path, asset_name)
@@ -3249,7 +3416,7 @@ def setup_blueprint(kind, asset_path):
     else:
         fail(f"Unknown BP kind: {kind}")
 
-    unreal.KismetEditorUtilities.compile_blueprint(blueprint)
+    compile_blueprint_if_available(blueprint)
     unreal.EditorAssetLibrary.save_loaded_asset(blueprint)
     log(f"Ready: {KIND_LABELS.get(kind, kind)} -> {package_asset}")
     return created
@@ -3517,7 +3684,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
         UB_ToM: datatableNumber(toM - segmentStartM),
         UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
         UB_Level: sectionStation?.level ?? null,
-        UB_HeightM: datatableNumber(sectionStation?.height_m || 0),
+        UB_HeightM: datatableNumber(section.center_height_m ?? sectionStation?.height_m ?? 0),
+        UB_FromHeightM: datatableNumber(section.from_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
+        UB_ToHeightM: datatableNumber(section.to_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
         UB_HeightSource: sectionStation?.height_source || "",
       });
       continue;
@@ -3531,7 +3700,9 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
       UB_ToM: datatableNumber(toM - segmentStartM),
       UB_CenterM: 0,
       UB_Level: null,
-      UB_HeightM: 0,
+      UB_HeightM: datatableNumber(section.center_height_m || 0),
+      UB_FromHeightM: datatableNumber(section.from_height_m || 0),
+      UB_ToHeightM: datatableNumber(section.to_height_m || 0),
       UB_HeightSource: "",
     });
   }
@@ -4292,10 +4463,16 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
+document.getElementById("btn-area-save-selection")?.addEventListener("click", saveCurrentAreaSelection);
+document.getElementById("btn-area-delete-selection")?.addEventListener("click", deleteSavedAreaSelection);
+document.getElementById("area-selection-preset")?.addEventListener("change", (event) => {
+  if (event.target.value) loadSavedAreaSelection(event.target.value);
+});
 document.getElementById("btn-postal-code")?.addEventListener("click", selectPostalCodeArea);
 document.getElementById("postal-code-input")?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") selectPostalCodeArea();
 });
+refreshSavedAreaSelectionSelect();
 
 map.on("mousedown", beginAreaSelection);
 map.on("mousemove", updateAreaSelection);
