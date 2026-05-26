@@ -1549,7 +1549,6 @@ function _renderFromMasterStations(rawTrack, ref, fitView) {
 
   if (editModeActive) renderEditMarkers(stationsOrdered);
 
-  populateSegmentSelects(stationsOrdered);
   scheduleCachePersist(ref);
   setStatus(`Linie ${ref} · ${stationsOrdered.length} Stationen`);
 }
@@ -2496,38 +2495,6 @@ function datatableNumber(value) {
   return +Number(value || 0).toFixed(2);
 }
 
-function getSegmentSelectionForCurrentLine() {
-  const from = document.getElementById("segment-from")?.value || "";
-  const to = document.getElementById("segment-to")?.value || "";
-  if (!from || !to || from === "__full__" || to === "__full__") return null;
-  return { from, to };
-}
-
-function populateSegmentSelects(stations) {
-  const fromSelect = document.getElementById("segment-from");
-  const toSelect = document.getElementById("segment-to");
-  if (!fromSelect || !toSelect) return;
-
-  const currentFrom = fromSelect.value;
-  const currentTo = toSelect.value;
-  for (const target of [fromSelect, toSelect]) {
-    target.textContent = "";
-    const full = document.createElement("option");
-    full.value = "__full__";
-    full.textContent = "ganze Linie";
-    target.appendChild(full);
-    for (const station of stations || []) {
-      const option = document.createElement("option");
-      option.value = station.name;
-      option.textContent = station.name;
-      target.appendChild(option);
-    }
-  }
-
-  fromSelect.value = [...fromSelect.options].some((option) => option.value === currentFrom) ? currentFrom : "__full__";
-  toSelect.value = [...toSelect.options].some((option) => option.value === currentTo) ? currentTo : "__full__";
-}
-
 function extractSubwayRefsFromText(value) {
   const refs = new Set();
   const text = String(value || "").toUpperCase();
@@ -2603,29 +2570,48 @@ function updateDatatableAreaLineSelection() {
   }
 }
 
-function buildDatatablePayloads(uePayload, segmentSelection = null) {
+function buildAreaRouteSegment(uePayload, bounds = areaSelectionBounds) {
+  if (!bounds?.isValid?.()) return null;
+  const points = uePayload?.route?.points || [];
+  const inside = points.filter((point) => {
+    const [lat, lon] = point.wgs84 || [];
+    return Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains(L.latLng(lat, lon));
+  });
+  if (!inside.length) return null;
+
+  const fromM = Math.min(...inside.map((point) => Number(point.dist_m)).filter(Number.isFinite));
+  const toM = Math.max(...inside.map((point) => Number(point.dist_m)).filter(Number.isFinite));
+  if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) return null;
+  return {
+    fromM,
+    toM,
+    suffix: "_area",
+  };
+}
+
+function buildDatatablePayloads(uePayload, segmentRange = null) {
   const allStations = [...(uePayload?.stations || [])].sort((a, b) => a.dist_m - b.dist_m);
   if (!allStations.length) throw new Error(`${uePayload?.ref || "Linie"} hat keine Stationsdaten.`);
 
-  let firstIndex = 0;
-  let lastIndex = allStations.length - 1;
-  if (segmentSelection?.from && segmentSelection?.to) {
-    const fromIndex = allStations.findIndex((station) => station.name === segmentSelection.from);
-    const toIndex = allStations.findIndex((station) => station.name === segmentSelection.to);
-    if (fromIndex < 0 || toIndex < 0) {
-      throw new Error(`Teilbereich ${segmentSelection.from} bis ${segmentSelection.to} nicht in ${uePayload.ref} gefunden.`);
-    }
-    firstIndex = Math.min(fromIndex, toIndex);
-    lastIndex = Math.max(fromIndex, toIndex);
+  const routeLength = Number(uePayload?.route?.total_length_m || 0);
+  const segmentStartM = segmentRange
+    ? Math.max(0, Number(segmentRange.fromM))
+    : Math.max(0, Number(allStations[0].platform_start_m ?? allStations[0].dist_m));
+  const segmentEndM = segmentRange
+    ? Math.min(routeLength || Number(segmentRange.toM), Number(segmentRange.toM))
+    : Math.min(
+      routeLength || Number(allStations[allStations.length - 1].platform_end_m ?? allStations[allStations.length - 1].dist_m),
+      Number(allStations[allStations.length - 1].platform_end_m ?? allStations[allStations.length - 1].dist_m),
+  );
+  if (!Number.isFinite(segmentStartM) || !Number.isFinite(segmentEndM) || segmentEndM <= segmentStartM) {
+    throw new Error(`${uePayload.ref} hat keinen gueltigen Bereich im markierten Rechteck.`);
   }
 
-  const selectedStations = allStations.slice(firstIndex, lastIndex + 1);
-  const routeLength = Number(uePayload?.route?.total_length_m || 0);
-  const segmentStartM = Math.max(0, Number(selectedStations[0].platform_start_m ?? selectedStations[0].dist_m));
-  const segmentEndM = Math.min(
-    routeLength || Number(selectedStations[selectedStations.length - 1].platform_end_m ?? selectedStations[selectedStations.length - 1].dist_m),
-    Number(selectedStations[selectedStations.length - 1].platform_end_m ?? selectedStations[selectedStations.length - 1].dist_m),
-  );
+  const selectedStations = allStations.filter((station) => {
+    const start = Number(station.platform_start_m ?? station.dist_m);
+    const end = Number(station.platform_end_m ?? station.dist_m);
+    return end >= segmentStartM && start <= segmentEndM;
+  });
 
   const stations = selectedStations.map((station) => ({
     name: station.name,
@@ -2676,9 +2662,7 @@ function buildDatatablePayloads(uePayload, segmentSelection = null) {
     });
   }
 
-  const fromKey = stationExportKey(selectedStations[0].name);
-  const toKey = stationExportKey(selectedStations[selectedStations.length - 1].name);
-  const suffix = segmentSelection ? `_${fromKey}_to_${toKey}` : "";
+  const suffix = segmentRange?.suffix || "";
   return { stations, sections, suffix };
 }
 
@@ -2709,18 +2693,17 @@ async function exportDatatableZip() {
     return;
   }
 
-  const originalRef = select?.value || lastLoadData?.ref || checked[0];
-  const segmentSelection = getSegmentSelectionForCurrentLine();
   const zip = new JSZip();
 
   try {
-    setStatus(`Erzeuge Datatable-ZIP fuer ${checked.join(", ")} ...`);
+    setStatus(`Erzeuge Datatable-ZIP fuer Bereichslinien ${checked.join(", ")} ...`);
     for (const ref of checked) {
       await ensureLineLoadedForDatatableExport(ref);
       const uePayload = exportToUnreal(true);
       if (!uePayload) throw new Error(`${ref} hat keinen UE-Payload.`);
-      const appliedSegment = ref === originalRef ? segmentSelection : null;
-      const { stations, sections, suffix } = buildDatatablePayloads(uePayload, appliedSegment);
+      const areaSegment = buildAreaRouteSegment(uePayload);
+      if (!areaSegment) throw new Error(`${ref} verlaeuft nicht durch den aktuell markierten Bereich.`);
+      const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment);
       const folderName = `${ref}${suffix}`;
       const folder = zip.folder(folderName);
       folder.file(`${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
@@ -3273,8 +3256,6 @@ const datatableLineSelect = document.getElementById("datatable-line-select");
 if (datatableLineSelect) {
   updateDatatableAreaLineSelection();
 }
-populateSegmentSelects([]);
-
 async function reloadCurrentFile() {
   const sourceFile = currentSourceFile;
   if (!sourceFile) {
