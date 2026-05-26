@@ -270,7 +270,8 @@
         transform: scale(1.5);
       }
 
-      .code-modal {
+      .code-modal,
+      .options-modal {
         position: fixed;
         z-index: 2000;
         inset: 0;
@@ -281,11 +282,13 @@
         background: rgba(15, 23, 42, 0.55);
       }
 
-      .code-modal[hidden] {
+      .code-modal[hidden],
+      .options-modal[hidden] {
         display: none;
       }
 
-      .code-modal-panel {
+      .code-modal-panel,
+      .options-modal-panel {
         display: flex;
         flex-direction: column;
         width: min(1100px, 100%);
@@ -296,7 +299,19 @@
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
       }
 
+      .options-modal-panel {
+        width: min(520px, 100%);
+        align-self: flex-start;
+        margin-top: 5vh;
+      }
+
+      .options-modal-body {
+        padding: 12px;
+        overflow: auto;
+      }
+
       .code-modal-head,
+      .options-modal-head,
       .code-modal-actions {
         display: flex;
         align-items: center;
@@ -312,7 +327,8 @@
         border-bottom: none;
       }
 
-      .code-modal-title {
+      .code-modal-title,
+      .options-modal-title {
         font-size: 0.95rem;
         font-weight: 600;
       }
@@ -337,8 +353,8 @@
       <h1>Berlin · U-Bahn</h1>
       <div class="row" style="margin-top: 6px">
         <button type="button" class="btn-clear" id="btn-edit">✏ Bearbeiten</button>
-        <button type="button" class="btn-clear" id="btn-spline">⟐ Spline</button>
         <button type="button" class="btn-clear" id="btn-fit" title="Gesamte Route anzeigen">⊕</button>
+        <button type="button" class="btn-clear" id="btn-options" title="Blueprint-Optionen">Optionen</button>
       </div>
       <div class="row" style="margin-top: 6px">
         <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
@@ -354,30 +370,6 @@
           <select id="datatable-line-select" aria-label="Datatable Export Linien">
             <option value="">erst Bereich laden</option>
           </select>
-        </div>
-        <div class="path-field">
-          <label for="tunnel-bp-path-input">Tunnel BP</label>
-          <input id="tunnel-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="path-field">
-          <label for="subway-bp-path-input">U-Bahn/Gleis BP</label>
-          <input id="subway-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="path-field">
-          <label for="tram-bp-path-input">Tram BP</label>
-          <input id="tram-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="path-field">
-          <label for="train-bp-path-input">S-Bahn/Zug BP</label>
-          <input id="train-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="path-field">
-          <label for="street-bp-path-input">Straße BP</label>
-          <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
-        </div>
-        <div class="path-field">
-          <label for="building-bp-path-input">Gebäude BP</label>
-          <input id="building-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
         </div>
       </div>
       <div class="row" style="margin-top: 10px">
@@ -403,6 +395,41 @@
       <p id="status"></p>
     </div>
     <div id="map" role="application" aria-label="Karte Berlin U-Bahn"></div>
+
+    <div id="options-modal" class="options-modal" hidden>
+      <div class="options-modal-panel" role="dialog" aria-modal="true" aria-labelledby="options-title">
+        <div class="options-modal-head">
+          <div id="options-title" class="options-modal-title">Optionen</div>
+          <button type="button" class="btn-clear" id="btn-options-close">Schliessen</button>
+        </div>
+        <div class="options-modal-body">
+          <div class="path-field">
+            <label for="tunnel-bp-path-input">Tunnel BP</label>
+            <input id="tunnel-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="subway-bp-path-input">U-Bahn/Gleis BP</label>
+            <input id="subway-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="tram-bp-path-input">Tram BP</label>
+            <input id="tram-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="train-bp-path-input">S-Bahn/Zug BP</label>
+            <input id="train-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="street-bp-path-input">Straße BP</label>
+            <input id="street-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="building-bp-path-input">Gebäude BP</label>
+            <input id="building-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div id="python-code-modal" class="code-modal" hidden>
       <div class="code-modal-panel" role="dialog" aria-modal="true" aria-labelledby="python-code-title">

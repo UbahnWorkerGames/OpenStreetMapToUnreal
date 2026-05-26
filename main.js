@@ -2993,6 +2993,16 @@ function closePythonCodeModal() {
   if (modal) modal.hidden = true;
 }
 
+function openOptionsModal() {
+  const modal = document.getElementById("options-modal");
+  if (modal) modal.hidden = false;
+}
+
+function closeOptionsModal() {
+  const modal = document.getElementById("options-modal");
+  if (modal) modal.hidden = true;
+}
+
 async function copyPythonCodeFromModal() {
   const output = document.getElementById("python-code-output");
   const code = output?.value || latestAreaPythonScript;
@@ -3600,7 +3610,11 @@ document.getElementById("btn-python-download")?.addEventListener("click", () => 
 document.getElementById("python-code-modal")?.addEventListener("click", (event) => {
   if (event.target?.id === "python-code-modal") closePythonCodeModal();
 });
-document.getElementById("btn-spline")?.addEventListener("click", toggleSplineEdit);
+document.getElementById("btn-options")?.addEventListener("click", openOptionsModal);
+document.getElementById("btn-options-close")?.addEventListener("click", closeOptionsModal);
+document.getElementById("options-modal")?.addEventListener("click", (event) => {
+  if (event.target?.id === "options-modal") closeOptionsModal();
+});
 document.getElementById("btn-reload")?.addEventListener("click", reloadCurrentFile);
 document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
