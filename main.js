@@ -125,6 +125,8 @@ let areaDragStart = null;
 let areaDraftRect = null;
 let areaFeatures = [];
 let areaCache = null;
+let datatableAreaLines = [];
+let detectedAreaSubwayLines = [];
 
 function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
@@ -967,10 +969,13 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
     .filter(Boolean)
     .map((filter) => `  ${filter}(${bbox});`)
     .join("\n");
+  const relationClauses = categories.includes("rail_subway")
+    ? `\n  relation["type"="route"]["route"="subway"](${bbox});`
+    : "";
   if (!clauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
   return `[out:json][timeout:120];
 (
-${clauses}
+${clauses}${relationClauses}
 );
 out geom(${bbox});`;
 }
@@ -1324,6 +1329,7 @@ function renderAreaFeatures() {
   }
 
   if (areaFeatures.length) {
+    updateDatatableAreaLineSelection();
     const summary = [...counts.entries()]
       .filter(([key, count]) => count > 0 && areaLayerVisibility.get(key))
       .map(([key, count]) => `${AREA_LAYER_LABELS[key]} ${count}`)
@@ -2444,6 +2450,81 @@ function populateSegmentSelects(stations) {
   toSelect.value = [...toSelect.options].some((option) => option.value === currentTo) ? currentTo : "__full__";
 }
 
+function extractSubwayRefsFromText(value) {
+  const refs = new Set();
+  const text = String(value || "").toUpperCase();
+  for (const match of text.matchAll(/\bU\s*([1-9])\b/g)) refs.add(`U${match[1]}`);
+  return refs;
+}
+
+function areaSubwayRefs(feature) {
+  if (feature?.category !== "rail_subway") return [];
+  const tags = feature.tags || {};
+  const refs = new Set();
+  for (const key of ["ref", "route_ref", "line", "lines", "name", "description"]) {
+    for (const ref of extractSubwayRefsFromText(tags[key])) refs.add(ref);
+  }
+  return [...refs].filter((ref) => LINES.includes(ref));
+}
+
+function overpassSubwayRouteRefs(data) {
+  const refs = new Set();
+  for (const element of data?.elements || []) {
+    const tags = element.tags || {};
+    if (element.type !== "relation" || tags.type !== "route" || tags.route !== "subway") continue;
+    for (const key of ["ref", "route_ref", "line", "lines", "name"]) {
+      for (const ref of extractSubwayRefsFromText(tags[key])) refs.add(ref);
+    }
+  }
+  return LINES.filter((line) => refs.has(line));
+}
+
+function getAreaSubwayLines() {
+  const refs = new Set();
+  for (const ref of detectedAreaSubwayLines) refs.add(ref);
+  for (const feature of areaFeatures) {
+    for (const ref of areaSubwayRefs(feature)) refs.add(ref);
+  }
+  return LINES.filter((line) => refs.has(line));
+}
+
+function updateDatatableAreaLineSelection() {
+  datatableAreaLines = getAreaSubwayLines();
+  const lineSelect = document.getElementById("datatable-line-select");
+  if (!lineSelect) return;
+
+  const previous = lineSelect.value;
+  lineSelect.textContent = "";
+
+  if (!datatableAreaLines.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = areaFeatures.length ? "keine U-Bahn-Linie im Bereich" : "erst Bereich laden";
+    lineSelect.appendChild(option);
+    return;
+  }
+
+  const allOption = document.createElement("option");
+  allOption.value = "__all__";
+  allOption.textContent = `alle im Bereich (${datatableAreaLines.join(", ")})`;
+  lineSelect.appendChild(allOption);
+
+  for (const line of datatableAreaLines) {
+    const option = document.createElement("option");
+    option.value = line;
+    option.textContent = line;
+    lineSelect.appendChild(option);
+  }
+
+  if (datatableAreaLines.includes(previous) || previous === "__all__") {
+    lineSelect.value = previous;
+  } else if (datatableAreaLines.includes(lastLoadData?.ref)) {
+    lineSelect.value = lastLoadData.ref;
+  } else {
+    lineSelect.value = "__all__";
+  }
+}
+
 function buildDatatablePayloads(uePayload, segmentSelection = null) {
   const allStations = [...(uePayload?.stations || [])].sort((a, b) => a.dist_m - b.dist_m);
   if (!allStations.length) throw new Error(`${uePayload?.ref || "Linie"} hat keine Stationsdaten.`);
@@ -2524,9 +2605,16 @@ async function ensureLineLoadedForDatatableExport(ref) {
 }
 
 async function exportDatatableZip() {
-  const checked = [...document.querySelectorAll("[data-datatable-line]:checked")].map((input) => input.value);
-  if (!checked.length) {
-    setStatus("Mindestens eine Linie fuer den Datatable-Export anhaken.", true);
+  const selectedExportLine = document.getElementById("datatable-line-select")?.value || "";
+  const availableLines = datatableAreaLines.length ? datatableAreaLines : getAreaSubwayLines();
+  if (!availableLines.length) {
+    setStatus("Erst einen Bereich mit U-Bahn-Linien laden.", true);
+    return;
+  }
+
+  const checked = selectedExportLine === "__all__" ? availableLines : [selectedExportLine].filter(Boolean);
+  if (!checked.length || checked.some((line) => !availableLines.includes(line))) {
+    setStatus("Eine Linie aus dem geladenen Bereich waehlen.", true);
     return;
   }
 
@@ -2957,6 +3045,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     const cacheKey = areaBoundsCacheKey(bounds, selectedCategories);
     if (areaCache?.key === cacheKey && Array.isArray(areaCache.features)) {
       areaFeatures = areaCache.features;
+      detectedAreaSubwayLines = areaCache.subwayLines || [];
       renderAreaFeatures();
       return true;
     }
@@ -2975,11 +3064,13 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       throw new Error("Antwort ohne elements");
     }
 
+    detectedAreaSubwayLines = overpassSubwayRouteRefs(data);
     areaFeatures = buildAreaFeatures(data, bounds);
-    areaCache = { key: cacheKey, bounds, features: areaFeatures };
+    areaCache = { key: cacheKey, bounds, features: areaFeatures, subwayLines: detectedAreaSubwayLines };
     if (!areaFeatures.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
+      updateDatatableAreaLineSelection();
       setStatus("Keine passenden Strassen- oder Schienen-Ways im Bereich gefunden.", true);
       return false;
     }
@@ -3082,17 +3173,7 @@ if (select) {
 
 const datatableLineSelect = document.getElementById("datatable-line-select");
 if (datatableLineSelect) {
-  for (const line of LINES) {
-    const label = document.createElement("label");
-    label.className = "toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = line;
-    input.dataset.datatableLine = line;
-    input.checked = line === "U8";
-    label.append(input, document.createTextNode(` ${line}`));
-    datatableLineSelect.appendChild(label);
-  }
+  updateDatatableAreaLineSelection();
 }
 populateSegmentSelects([]);
 

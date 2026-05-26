@@ -79,17 +79,6 @@
         border-top: 1px solid var(--border);
       }
 
-      .export-lines {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 5px 8px;
-        margin-top: 6px;
-      }
-
-      .export-lines .toggle {
-        font-size: 0.76rem;
-      }
-
       .toggle {
         display: flex;
         align-items: center;
@@ -351,9 +340,11 @@
       </div>
       <div class="export-box">
         <div class="row">
-          <label>Export-Linien</label>
+          <label for="datatable-line-select">Export</label>
+          <select id="datatable-line-select" aria-label="Datatable Export Linien">
+            <option value="">erst Bereich laden</option>
+          </select>
         </div>
-        <div id="datatable-line-select" class="export-lines" aria-label="Datatable Export Linien"></div>
         <div class="row" style="margin-top: 8px">
           <label for="segment-from">Teil</label>
           <select id="segment-from" class="range-select" aria-label="Teilbereich Start"></select>
