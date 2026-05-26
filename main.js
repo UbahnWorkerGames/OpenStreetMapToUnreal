@@ -570,22 +570,28 @@ function isPlatformRole(role) {
   return r.includes("platform");
 }
 
+function isStopMemberForRoute(member, routeMode = "subway") {
+  if (isStopRole(member.role)) return true;
+  return routeMode === "bus" && isPlatformRole(member.role);
+}
+
 /**
  * Gibt Stop-Nodes in Reihenfolge der Relation zurück, dedupliziert nach Name.
  * Nur Nodes mit stop-Role werden berücksichtigt (keine platform-Nodes).
  */
-function extractStopNodes(relation, elements) {
+function extractStopNodes(relation, elements, routeMode = "subway") {
   const idx = buildIndex(elements);
   const seen = new Set();
   const stops = [];
   for (const member of relation.members || []) {
-    if (member.type !== "node" || !isStopRole(member.role)) continue;
-    const el = idx.get(`node/${member.ref}`);
-    if (!el || el.lat == null || el.lon == null) continue;
-    const name = getStationName(el);
+    if (!isStopMemberForRoute(member, routeMode)) continue;
+    const el = idx.get(`${member.type}/${member.ref}`);
+    const point = elementPoint(el, idx);
+    if (!el || !point) continue;
+    const name = getStationName(el) || getStationName(member);
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    stops.push({ id: el.id, name, lat: el.lat, lon: el.lon, tags: el.tags || {} });
+    stops.push({ id: el.id, name, lat: point[0], lon: point[1], tags: el.tags || member.tags || {} });
   }
   return stops;
 }
@@ -822,9 +828,9 @@ function getRouteRelationsForRef(data, ref, routeMode = "subway") {
  * Für jede Station beide Stop-Koordinaten (eine pro Richtungsrelation) mitteln.
  * Relation A gibt die Reihenfolge vor; B liefert nur den Gegengleispunkt.
  */
-function mergeStopsFromBothRelations(relA, relB, elements) {
-  const stopsA = extractStopNodes(relA, elements);
-  const stopsB = extractStopNodes(relB, elements);
+function mergeStopsFromBothRelations(relA, relB, elements, routeMode = "subway") {
+  const stopsA = extractStopNodes(relA, elements, routeMode);
+  const stopsB = extractStopNodes(relB, elements, routeMode);
   const bByName = new Map(stopsB.map((s) => [s.name, s]));
   return stopsA.map((s) => {
     const b = bByName.get(s.name);
@@ -833,11 +839,11 @@ function mergeStopsFromBothRelations(relA, relB, elements) {
   });
 }
 
-function pickRelationWithMostStops(relations, elements) {
+function pickRelationWithMostStops(relations, elements, routeMode = "subway") {
   let best = null;
   let bestCount = -1;
   for (const rel of relations) {
-    const n = extractStopNodes(rel, elements).length;
+    const n = extractStopNodes(rel, elements, routeMode).length;
     if (n > bestCount) {
       best = rel;
       bestCount = n;
@@ -3486,7 +3492,7 @@ function loadFromUploadedData(data, ref, routeMode = currentRouteMode || "subway
       return;
     }
     const relations = getRouteRelationsForRef(data, ref, currentRouteMode);
-    const relation = pickRelationWithMostStops(relations, data.elements || []);
+    const relation = pickRelationWithMostStops(relations, data.elements || [], currentRouteMode);
     if (!relation) {
       setStatus("Keine passende Relation.", true);
       clearRoute();
@@ -3496,8 +3502,8 @@ function loadFromUploadedData(data, ref, routeMode = currentRouteMode || "subway
 
     const relB = relations.find((r) => r !== relation);
     const stopNodes = relB
-      ? mergeStopsFromBothRelations(relation, relB, data.elements || [])
-      : extractStopNodes(relation, data.elements || []);
+      ? mergeStopsFromBothRelations(relation, relB, data.elements || [], currentRouteMode)
+      : extractStopNodes(relation, data.elements || [], currentRouteMode);
     if (!stopNodes.length) {
       setStatus(`Keine Stop-Nodes für ${ref} gefunden.`, true);
       clearRoute();
