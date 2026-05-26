@@ -51,13 +51,13 @@ lat 52.520008
 lon 13.404954
 ```
 
-Exported Unreal coordinates are centimeters from that origin with `X=East`, `Y=North`, and `Z=Up`. Because the origin is fixed, separate exports from different Berlin areas can be imported into the same level and will keep their real distance from each other.
+Exported Unreal coordinates are centimeters from that origin with `X=East`, `Y=South`, and `Z=Up`. Because the origin is fixed, separate exports from different Berlin areas can be imported into the same level and will keep their real distance from each other.
 
 For buildings, the Actor transform is the primary placement data:
 
 ```text
 Location.X = east offset in cm from Berlin origin
-Location.Y = north offset in cm from Berlin origin
+Location.Y = south offset in cm from Berlin origin
 Location.Z = half building height in cm
 Rotation.Yaw = footprint rotation in degrees
 Scale.X/Y/Z = width/depth/height divided by 100 cm cube size
@@ -67,7 +67,7 @@ For traffic signs, the Actor transform is the primary placement data:
 
 ```text
 Location.X = east offset in cm from Berlin origin
-Location.Y = north offset in cm from Berlin origin
+Location.Y = south offset in cm from Berlin origin
 Location.Z = 0
 ```
 

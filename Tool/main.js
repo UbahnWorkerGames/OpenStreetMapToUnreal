@@ -453,7 +453,7 @@ function buildCoordinateTransform(selected) {
     toPointCm([lat, lon]) {
       return {
         X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
-        Y: +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+        Y: +(((lat0 - lat) * metersPerDegreeLat * 100).toFixed(1)),
         Z: 0,
       };
     },
@@ -855,7 +855,7 @@ function buildAreaPythonPayload() {
     origin_wgs84: transform.originWgs84,
     coordinate_system: {
       unit: "cm",
-      axes: "X=East, Y=North, Z=Up",
+      axes: "X=East, Y=South, Z=Up",
       origin: "Berlin fixed WGS84 origin",
       meters_per_degree: transform.metersPerDegree,
     },
