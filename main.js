@@ -149,6 +149,9 @@ const areaLayerVisibility = new Map(
 
 let areaSelectionBounds = null;
 let areaSelectionRect = null;
+let areaSelectionMoveMarker = null;
+let areaSelectionResizeMarkers = [];
+let areaSelectionDragState = null;
 let areaSelectMode = false;
 let areaDragStart = null;
 let areaDraftRect = null;
@@ -1563,13 +1566,123 @@ function setAreaSelectMode(active) {
   }
 }
 
-function setAreaSelectionBounds(bounds) {
+function areaSelectionStatus(bounds, prefix = "Bereich markiert") {
+  const sizeM = [
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]),
+    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]),
+  ];
+  setStatus(`${prefix}: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m · Jetzt "Bereich laden" klicken.`);
+}
+
+function areaSelectionCornerLatLngs(bounds) {
+  return {
+    nw: L.latLng(bounds.getNorth(), bounds.getWest()),
+    ne: L.latLng(bounds.getNorth(), bounds.getEast()),
+    se: L.latLng(bounds.getSouth(), bounds.getEast()),
+    sw: L.latLng(bounds.getSouth(), bounds.getWest()),
+  };
+}
+
+function areaSelectionHandleIcon(kind) {
+  const isMove = kind === "move";
+  return L.divIcon({
+    className: "",
+    html: `<div class="area-edit-handle${isMove ? " move" : ""}"></div>`,
+    iconSize: isMove ? [18, 18] : [14, 14],
+    iconAnchor: isMove ? [9, 9] : [7, 7],
+  });
+}
+
+function removeAreaSelectionEditor() {
+  if (areaSelectionMoveMarker) {
+    areaSelectionLayer.removeLayer(areaSelectionMoveMarker);
+    areaSelectionMoveMarker = null;
+  }
+  for (const marker of areaSelectionResizeMarkers) areaSelectionLayer.removeLayer(marker);
+  areaSelectionResizeMarkers = [];
+  areaSelectionDragState = null;
+}
+
+function updateAreaSelectionVisuals(bounds) {
+  areaSelectionBounds = bounds;
+  areaSelectionRect?.setBounds(bounds);
+  const corners = areaSelectionCornerLatLngs(bounds);
+  areaSelectionMoveMarker?.setLatLng(bounds.getCenter());
+  for (const marker of areaSelectionResizeMarkers) {
+    marker.setLatLng(corners[marker.options.areaCorner]);
+  }
+}
+
+function boundsFromMoveDrag(currentLatLng) {
+  const state = areaSelectionDragState;
+  const startBounds = state.bounds;
+  const deltaLat = currentLatLng.lat - state.startLatLng.lat;
+  const deltaLng = currentLatLng.lng - state.startLatLng.lng;
+  return L.latLngBounds(
+    [startBounds.getSouth() + deltaLat, startBounds.getWest() + deltaLng],
+    [startBounds.getNorth() + deltaLat, startBounds.getEast() + deltaLng],
+  );
+}
+
+function boundsFromResizeDrag(currentLatLng) {
+  const opposite = areaSelectionDragState.opposite;
+  return L.latLngBounds(
+    [Math.min(opposite.lat, currentLatLng.lat), Math.min(opposite.lng, currentLatLng.lng)],
+    [Math.max(opposite.lat, currentLatLng.lat), Math.max(opposite.lng, currentLatLng.lng)],
+  );
+}
+
+function renderAreaSelectionEditor() {
+  removeAreaSelectionEditor();
+  if (!areaSelectionBounds?.isValid?.()) return;
+
+  areaSelectionMoveMarker = L.marker(areaSelectionBounds.getCenter(), {
+    icon: areaSelectionHandleIcon("move"),
+    draggable: true,
+    zIndexOffset: 2500,
+    title: "Bereich verschieben",
+  }).addTo(areaSelectionLayer);
+  areaSelectionMoveMarker.on("dragstart", (event) => {
+    map.dragging.disable();
+    areaSelectionDragState = { type: "move", startLatLng: event.target.getLatLng(), bounds: areaSelectionBounds };
+  });
+  areaSelectionMoveMarker.on("drag", (event) => updateAreaSelectionVisuals(boundsFromMoveDrag(event.target.getLatLng())));
+  areaSelectionMoveMarker.on("dragend", () => {
+    map.dragging.enable();
+    setAreaSelectionBounds(areaSelectionBounds, "Bereich verschoben");
+  });
+
+  const corners = areaSelectionCornerLatLngs(areaSelectionBounds);
+  const opposites = { nw: "se", ne: "sw", se: "nw", sw: "ne" };
+  areaSelectionResizeMarkers = Object.entries(corners).map(([corner, latLng]) => {
+    const marker = L.marker(latLng, {
+      icon: areaSelectionHandleIcon(corner),
+      draggable: true,
+      zIndexOffset: 2600,
+      title: "Bereich skalieren",
+      areaCorner: corner,
+    }).addTo(areaSelectionLayer);
+    marker.on("dragstart", () => {
+      map.dragging.disable();
+      areaSelectionDragState = { type: "resize", corner, opposite: corners[opposites[corner]] };
+    });
+    marker.on("drag", (event) => updateAreaSelectionVisuals(boundsFromResizeDrag(event.target.getLatLng())));
+    marker.on("dragend", () => {
+      map.dragging.enable();
+      setAreaSelectionBounds(areaSelectionBounds, "Bereich skaliert");
+    });
+    return marker;
+  });
+}
+
+function setAreaSelectionBounds(bounds, statusPrefix = "Bereich markiert") {
   if (!bounds?.isValid?.()) {
     setStatus("Bereichsauswahl ist ungueltig.", true);
     return;
   }
   areaSelectionBounds = bounds;
   if (areaSelectionRect) areaSelectionLayer.removeLayer(areaSelectionRect);
+  removeAreaSelectionEditor();
   areaSelectionRect = L.rectangle(bounds, {
     color: "#0f766e",
     weight: 2,
@@ -1577,11 +1690,8 @@ function setAreaSelectionBounds(bounds) {
     fillOpacity: 0.08,
     dashArray: "6 4",
   }).addTo(areaSelectionLayer);
-  const sizeM = [
-    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]),
-    haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]),
-  ];
-  setStatus(`Bereich markiert: ${sizeM[1].toFixed(0)} m x ${sizeM[0].toFixed(0)} m · Jetzt "Bereich laden" klicken.`);
+  renderAreaSelectionEditor();
+  areaSelectionStatus(bounds, statusPrefix);
 }
 
 function beginAreaSelection(e) {
@@ -1589,6 +1699,11 @@ function beginAreaSelection(e) {
   L.DomEvent.stop(e);
   areaDragStart = e.latlng;
   map.dragging.disable();
+  removeAreaSelectionEditor();
+  if (areaSelectionRect) {
+    areaSelectionLayer.removeLayer(areaSelectionRect);
+    areaSelectionRect = null;
+  }
   if (areaDraftRect) areaSelectionLayer.removeLayer(areaDraftRect);
   areaDraftRect = L.rectangle(L.latLngBounds(areaDragStart, areaDragStart), {
     color: "#0f766e",
