@@ -3286,7 +3286,7 @@ function stationInBounds(station, bounds) {
   return Number.isFinite(lat) && Number.isFinite(lon) && bounds.contains(L.latLng(lat, lon));
 }
 
-function buildDatatablePayloads(uePayload, segmentRange = null) {
+function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
   const allStations = [...(uePayload?.stations || [])].sort((a, b) => a.dist_m - b.dist_m);
   if (!allStations.length) throw new Error(`${uePayload?.ref || "Linie"} hat keine Stationsdaten.`);
 
@@ -3313,16 +3313,12 @@ function buildDatatablePayloads(uePayload, segmentRange = null) {
     return overlapsSegment || (stopInSelection && stationDist >= segmentStartM - 500 && stationDist <= segmentEndM + 500);
   });
 
+  const lineName = line ? transitLineLabel(line) : (uePayload?.ref || "");
   const stations = selectedStations.map((station) => ({
-    Name: stationExportKey(station.name),
-    name: station.name,
-    key: stationExportKey(station.name),
-    dist_m: datatableNumber(station.dist_m - segmentStartM),
-    level: station.level ?? null,
-    height_m: datatableNumber(station.height_m || 0),
-    height_source: station.height_source || "",
-    wgs84: station.stop_wgs84 || station.wgs84 || null,
-    location_cm: station.stop_location_cm || station.location_cm || [0, 0, datatableNumber((station.height_m || 0) * 100)],
+    Key: stationExportKey(station.name),
+    Name: station.name,
+    Linien: lineName ? [lineName] : [],
+    DistanceAtSpline: datatableNumber(station.dist_m - segmentStartM),
   }));
 
   const stationByName = new Map(selectedStations.map((station) => [station.name, station]));
@@ -3407,7 +3403,7 @@ async function exportDatatableZip() {
       const areaSegments = buildAreaRouteSegments(uePayload);
       if (!areaSegments.length) throw new Error(`${transitLineLabel(line)} verlaeuft nicht durch den aktuell markierten Bereich.`);
       for (const areaSegment of areaSegments) {
-        const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment);
+        const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment, line);
         const folderName = `${line.route}_${ref}${suffix}`;
         const folder = zip.folder(folderName);
         folder.file(`${line.route}_${ref}${suffix}_stations.json`, JSON.stringify(stations, null, "\t"));
