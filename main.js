@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.3";
-const APP_VERSION_DATE = "2026-05-28 21:40 +02:00";
+const APP_VERSION = "0.1.4";
+const APP_VERSION_DATE = "2026-05-28 22:10 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3778,6 +3778,12 @@ def destroy_existing_actor_with_prefix(prefix):
             unreal.EditorLevelLibrary.destroy_actor(actor)
 
 
+def destroy_existing_actor_with_label(label):
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label() == label:
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+
 def load_bp_class(asset_path):
     asset_class = unreal.EditorAssetLibrary.load_blueprint_class(asset_path)
     if asset_class is None:
@@ -3882,8 +3888,8 @@ def set_payload_if_present(actor, row, object_type):
 
 
 def configure_spline_component(spline_component, row):
-    set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    set_editor_property_if_present(spline_component, "override_construction_script", False)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
         spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
@@ -3917,6 +3923,7 @@ def set_actor_tags(actor, row):
 
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
+    destroy_existing_actor_with_label(label)
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
         unreal.Vector(0.0, 0.0, 0.0),
@@ -3933,6 +3940,7 @@ def create_street_spline_actor(actor_class, row):
 
 def create_building_actor(actor_class, row):
     label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('BuildingKey', row.get('Name', 'Building')))}"
+    destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
         float(row["Y"]) + WORLD_OFFSET_CM.y,
@@ -3966,6 +3974,7 @@ def create_building_actor(actor_class, row):
 
 def create_tree_actor(actor_class, row):
     label = f"{TREE_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('TreeKey', row.get('Name', 'Tree')))}"
+    destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
         float(row["Y"]) + WORLD_OFFSET_CM.y,
@@ -3997,6 +4006,7 @@ def create_tree_actor(actor_class, row):
 def create_prop_actor(actor_class, row):
     label_name = row.get("DisplayName") or row.get("Name") or row.get("Type") or row.get("PropKey", "Prop")
     label = f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(label_name)}_{sanitize_label_part(row.get('OsmId', ''))}"
+    destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
         float(row["Y"]) + WORLD_OFFSET_CM.y,
@@ -4027,10 +4037,6 @@ def create_prop_actor(actor_class, row):
 
 def main():
     bp_class_cache = {}
-    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
-    destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
-    destroy_existing_actor_with_prefix(f"{TREE_ACTOR_LABEL_PREFIX}_")
-    destroy_existing_actor_with_prefix(f"{PROP_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
