@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.2";
-const APP_VERSION_DATE = "2026-05-28 21:31 +02:00";
+const APP_VERSION = "0.1.3";
+const APP_VERSION_DATE = "2026-05-28 21:40 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -1354,7 +1354,9 @@ function classifyAreaWay(tags = {}) {
 function classifyAreaNode(tags = {}) {
   if (tags.natural === "tree") return "tree";
   if (tags.highway === "traffic_signals") return "traffic_signal";
-  if (hasTrafficSignTag(tags) || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
+  if (hasTrafficSignTag(tags) || tags.highway === "stop" || tags.highway === "give_way" || tags.highway === "milestone" || tags.tourism === "information") {
+    return "traffic_sign_node";
+  }
   if (["restaurant", "cafe", "fast_food", "bar", "pub", "food_court"].includes(tags.amenity)) return "amenity_food";
   if (tags.shop === "supermarket") return "amenity_shop";
   if (tags.shop) return "retail_shop";
@@ -1427,7 +1429,15 @@ function areaOverpassFilterForCategory(category) {
     case "traffic_signal":
       return 'node["highway"="traffic_signals"]';
     case "traffic_sign_node":
-      return ['node[~"^traffic_sign(:.*)?$"~"."]', 'way[~"^traffic_sign(:.*)?$"~"."]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
+      return [
+        'node[~"^traffic_sign(:.*)?$"~"."]',
+        'way[~"^traffic_sign(:.*)?$"~"."]',
+        'relation[~"^traffic_sign(:.*)?$"~"."]',
+        'node["highway"~"^(stop|give_way|milestone)$"]',
+        'node["tourism"="information"]["information"~"^(guidepost|map|board)$"]',
+        'node["direction"]',
+        'node["destination"]',
+      ];
     case "amenity_food":
       return 'node["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court)$"]';
     case "amenity_shop":
@@ -2837,6 +2847,9 @@ function firstTrafficSignValue(tags = {}) {
 function readableTrafficSign(tags = {}) {
   if (tags.highway === "stop") return "Stopschild";
   if (tags.highway === "give_way") return "Vorfahrt gewaehren";
+  if (tags.highway === "milestone") return "Kilometerschild";
+  if (tags.tourism === "information") return tags.information ? `Infoschild ${tags.information}` : "Infoschild";
+  if (tags.destination) return `Wegweiser ${tags.destination}`;
   const value = firstTrafficSignValue(tags);
   if (!value) return "Verkehrsschild";
   const normalized = String(value).toLowerCase();
@@ -3852,6 +3865,22 @@ def set_tags(actor, tags):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
 
+def payload_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
+
+
+def set_payload_if_present(actor, row, object_type):
+    payload = {str(key): payload_value(value) for key, value in dict(row).items()}
+    payload["ObjectType"] = object_type
+    if not set_editor_property_if_present(actor, "payload", payload):
+        return False
+    return True
+
+
 def configure_spline_component(spline_component, row):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
@@ -3883,6 +3912,7 @@ def set_actor_tags(actor, row):
     if row.get("bTunnel"):
         tags.append("Tunnel")
     set_tags(actor, tags)
+    set_payload_if_present(actor, row, "OSM_SPLINE")
 
 
 def create_street_spline_actor(actor_class, row):
@@ -3930,6 +3960,7 @@ def create_building_actor(actor_class, row):
         row.get("Address", ""),
     ]
     set_tags(actor, tags)
+    set_payload_if_present(actor, row, "OSM_BUILDING")
     return actor
 
 
@@ -3959,6 +3990,7 @@ def create_tree_actor(actor_class, row):
         row.get("LeafType", ""),
     ]
     set_tags(actor, tags)
+    set_payload_if_present(actor, row, "OSM_TREE")
     return actor
 
 
@@ -3989,6 +4021,7 @@ def create_prop_actor(actor_class, row):
         row.get("Address", ""),
     ]
     set_tags(actor, tags)
+    set_payload_if_present(actor, row, "OSM_PROP")
     return actor
 
 
