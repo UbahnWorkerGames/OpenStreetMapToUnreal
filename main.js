@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.1";
-const APP_VERSION_DATE = "2026-05-28 21:27 +02:00";
+const APP_VERSION = "0.1.2";
+const APP_VERSION_DATE = "2026-05-28 21:31 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3733,7 +3733,6 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
     ...(bpPaths || {}),
   }));
   return `import json
-import base64
 import re
 
 import unreal
@@ -3849,13 +3848,6 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
-def actor_data_tag(row, object_type):
-    payload = dict(row)
-    payload["ObjectType"] = object_type
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
-
-
 def set_tags(actor, tags):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
@@ -3878,7 +3870,6 @@ def configure_spline_component(spline_component, row):
 
 def set_actor_tags(actor, row):
     tags = [
-        actor_data_tag(row, "OSM_SPLINE"),
         "OSM_SPLINE",
         "CityStreet",
         row.get("Street", "") or row.get("SplineKey", ""),
@@ -3930,7 +3921,6 @@ def create_building_actor(actor_class, row):
         )
     )
     tags = [
-        actor_data_tag(row, "OSM_BUILDING"),
         "OSM_BUILDING",
         "building",
         row.get("BuildingKey", ""),
@@ -3958,7 +3948,6 @@ def create_tree_actor(actor_class, row):
     height_scale = max(0.01, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     actor.set_actor_scale3d(unreal.Vector(crown_scale, crown_scale, height_scale))
     tags = [
-        actor_data_tag(row, "OSM_TREE"),
         "OSM_TREE",
         "tree",
         row.get("TreeKey", ""),
@@ -3989,7 +3978,6 @@ def create_prop_actor(actor_class, row):
     height_scale = max(0.1, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     actor.set_actor_scale3d(unreal.Vector(0.25, 0.25, height_scale))
     tags = [
-        actor_data_tag(row, "OSM_PROP"),
         "OSM_PROP",
         "prop",
         row.get("Category", ""),

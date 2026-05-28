@@ -10,4 +10,5 @@
 
 ## Version Log
 
+- 0.1.2 | 2026-05-28 21:31 +02:00 | Removed encoded JSON from Unreal actor tags; tag 0 is a plain object type again.
 - 0.1.1 | 2026-05-28 21:27 +02:00 | Added visible app versioning and timestamp tracking.
