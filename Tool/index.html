@@ -441,6 +441,7 @@
       <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
         <button type="button" class="btn-clear" id="btn-area-load" title="Straßen, Schienen, Bus- und Bahnlinien im markierten Bereich laden">Bereich laden</button>
+        <button type="button" class="btn-clear" id="btn-area-reset-layers" title="Alle Layer abwählen, Bereich behalten">0</button>
       </div>
       <div class="row" style="margin-top: 6px">
         <label for="area-selection-preset">Selection</label>
@@ -534,9 +535,10 @@
             <label class="toggle"><input type="checkbox" data-area-layer="drinking_water"> Trinkwasser</label>
           </div>
         </details>
-        <details class="layer-group">
+        <details class="layer-group" open>
           <summary>Stadtmöbel & Details</summary>
           <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="traffic_signal"> Ampeln</label>
             <label class="toggle"><input type="checkbox" data-area-layer="traffic_sign_node"> Verkehrsschilder</label>
             <label class="toggle"><input type="checkbox" data-area-layer="street_lamp"> Laternen</label>
             <label class="toggle"><input type="checkbox" data-area-layer="crossing"> Fußgänger</label>
