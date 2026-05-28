@@ -1351,7 +1351,7 @@ function classifyAreaWay(tags = {}) {
 function classifyAreaNode(tags = {}) {
   if (tags.natural === "tree") return "tree";
   if (tags.highway === "traffic_signals") return "traffic_signal";
-  if (tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
+  if (hasTrafficSignTag(tags) || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
   if (["restaurant", "cafe", "fast_food", "bar", "pub", "food_court"].includes(tags.amenity)) return "amenity_food";
   if (tags.shop === "supermarket") return "amenity_shop";
   if (tags.shop) return "retail_shop";
@@ -1424,7 +1424,7 @@ function areaOverpassFilterForCategory(category) {
     case "traffic_signal":
       return 'node["highway"="traffic_signals"]';
     case "traffic_sign_node":
-      return ['node["traffic_sign"]', 'node["traffic_sign:forward"]', 'node["traffic_sign:backward"]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
+      return ['node[~"^traffic_sign(:.*)?$"~"."]', 'way[~"^traffic_sign(:.*)?$"~"."]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
     case "amenity_food":
       return 'node["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court)$"]';
     case "amenity_shop":
@@ -2822,10 +2822,19 @@ function treeType(tags = {}) {
   return tags.species || tags.genus || tags.taxon || tags.leaf_type || tags.leaf_cycle || tags.denotation || "tree";
 }
 
+function hasTrafficSignTag(tags = {}) {
+  return Object.keys(tags).some((key) => key === "traffic_sign" || key.startsWith("traffic_sign:"));
+}
+
+function firstTrafficSignValue(tags = {}) {
+  const key = Object.keys(tags).find((tagKey) => tagKey === "traffic_sign" || tagKey.startsWith("traffic_sign:"));
+  return key ? tags[key] : "";
+}
+
 function readableTrafficSign(tags = {}) {
   if (tags.highway === "stop") return "Stopschild";
   if (tags.highway === "give_way") return "Vorfahrt gewaehren";
-  const value = tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || "";
+  const value = firstTrafficSignValue(tags);
   if (!value) return "Verkehrsschild";
   const normalized = String(value).toLowerCase();
   if (normalized.includes("stop") || normalized.includes("206")) return "Stopschild";
@@ -2860,11 +2869,9 @@ function propDisplayName(tags = {}, category = "prop", fallback = "") {
 
 function propType(tags = {}, category = "prop") {
   if (category === "traffic_signal" || tags.highway === "traffic_signals") return "traffic_signals";
-  if (category === "traffic_sign_node") return tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || tags.highway || "traffic_sign";
+  if (category === "traffic_sign_node") return firstTrafficSignValue(tags) || tags.highway || "traffic_sign";
   if (category === "street_lamp") return lampDetails(tags) || tags.highway || tags.man_made || "street_lamp";
-  return tags.traffic_sign ||
-    tags["traffic_sign:forward"] ||
-    tags["traffic_sign:backward"] ||
+  return firstTrafficSignValue(tags) ||
     tags.highway ||
     tags.man_made ||
     tags.amenity ||
@@ -3723,6 +3730,7 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
     ...(bpPaths || {}),
   }));
   return `import json
+import base64
 import re
 
 import unreal
@@ -3841,7 +3849,8 @@ def set_editor_property_if_present(obj, property_name, value):
 def actor_data_tag(row, object_type):
     payload = dict(row)
     payload["ObjectType"] = object_type
-    return "OSM_JSON:" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
 
 
 def set_tags(actor, tags):
