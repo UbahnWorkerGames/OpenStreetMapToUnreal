@@ -16,6 +16,9 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
+const APP_VERSION = "0.1.1";
+const APP_VERSION_DATE = "2026-05-28 21:27 +02:00";
+
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
 const map = L.map("map", { zoomControl: true, minZoom: 10, maxZoom: 18 })
@@ -5228,7 +5231,7 @@ async function reloadCurrentFile() {
   }
 }
 
-setStatus("Bereich wählen und OSM Bereich laden oder Master laden.");
+setStatus(`v${APP_VERSION} (${APP_VERSION_DATE}) · Bereich wählen und OSM Bereich laden oder Master laden.`);
 
 // ─── Edit-Panel Handler ───────────────────────────────────────────────────────
 

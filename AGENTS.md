@@ -7,3 +7,7 @@
 - Do not add silent fallbacks or workarounds that hide errors; stop on failures and fix the root cause.
 - Run the relevant tests or build checks after changes when the project provides them.
 - If a command fails, report the failure and address it directly before continuing.
+
+## Version Log
+
+- 0.1.1 | 2026-05-28 21:27 +02:00 | Added visible app versioning and timestamp tracking.
