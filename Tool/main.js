@@ -3772,6 +3772,16 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
+def actor_data_tag(row, object_type):
+    payload = dict(row)
+    payload["ObjectType"] = object_type
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def set_tags(actor, tags):
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+
+
 def configure_spline_component(spline_component, row):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
@@ -3790,6 +3800,7 @@ def configure_spline_component(spline_component, row):
 
 def set_actor_tags(actor, row):
     tags = [
+        actor_data_tag(row, "OSM_SPLINE"),
         "OSM_SPLINE",
         "CityStreet",
         row.get("Street", "") or row.get("SplineKey", ""),
@@ -3802,7 +3813,7 @@ def set_actor_tags(actor, row):
         tags.append("Bridge")
     if row.get("bTunnel"):
         tags.append("Tunnel")
-    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+    set_tags(actor, tags)
 
 
 def create_street_spline_actor(actor_class, row):
@@ -3841,6 +3852,7 @@ def create_building_actor(actor_class, row):
         )
     )
     tags = [
+        actor_data_tag(row, "OSM_BUILDING"),
         "OSM_BUILDING",
         "building",
         row.get("BuildingKey", ""),
@@ -3849,7 +3861,7 @@ def create_building_actor(actor_class, row):
         row.get("Type", ""),
         row.get("Address", ""),
     ]
-    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+    set_tags(actor, tags)
     return actor
 
 
@@ -3868,6 +3880,7 @@ def create_tree_actor(actor_class, row):
     height_scale = max(0.01, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     actor.set_actor_scale3d(unreal.Vector(crown_scale, crown_scale, height_scale))
     tags = [
+        actor_data_tag(row, "OSM_TREE"),
         "OSM_TREE",
         "tree",
         row.get("TreeKey", ""),
@@ -3878,7 +3891,7 @@ def create_tree_actor(actor_class, row):
         row.get("Species", ""),
         row.get("LeafType", ""),
     ]
-    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+    set_tags(actor, tags)
     return actor
 
 
@@ -3897,6 +3910,7 @@ def create_prop_actor(actor_class, row):
     height_scale = max(0.1, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     actor.set_actor_scale3d(unreal.Vector(0.25, 0.25, height_scale))
     tags = [
+        actor_data_tag(row, "OSM_PROP"),
         "OSM_PROP",
         "prop",
         row.get("Category", ""),
@@ -3906,7 +3920,7 @@ def create_prop_actor(actor_class, row):
         row.get("Ref", ""),
         row.get("Address", ""),
     ]
-    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+    set_tags(actor, tags)
     return actor
 
 
