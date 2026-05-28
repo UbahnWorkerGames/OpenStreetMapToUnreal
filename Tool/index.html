@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
@@ -67,10 +67,35 @@
       }
 
       .layer-toggles {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 8px;
+        max-height: min(58vh, 650px);
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .layer-group {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .layer-group summary {
+        cursor: pointer;
+        padding: 7px 10px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--text);
+        background: #f8fafc;
+      }
+
+      .layer-group-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px 10px;
-        margin-top: 8px;
+        padding: 8px 10px 10px;
       }
 
       .export-box {
@@ -392,17 +417,17 @@
     <div class="panel">
       <h1>Berlin · U-Bahn</h1>
       <div class="row" style="margin-top: 6px">
-        <button type="button" class="btn-clear" id="btn-edit">✏ Bearbeiten</button>
-        <button type="button" class="btn-clear" id="btn-fit" title="Gesamte Route anzeigen">⊕</button>
         <button type="button" class="btn-clear" id="btn-options" title="Blueprint-Optionen">Optionen</button>
       </div>
       <div class="row" style="margin-top: 6px">
-        <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">💾 Master</button>
+        <button type="button" class="btn-clear" id="btn-export-master" title="Master-JSON speichern (standalone, kein Overpass nötig)">Master</button>
         <button type="button" class="btn-clear" id="btn-export-datatables" title="UE-Datatables als ZIP exportieren">DT ZIP</button>
-        <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Area-JSON speichern">PCG JSON</button>
-        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script fuer Bereichs-Splines speichern">UE Python</button>
-        <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">📂 Laden</button>
-        <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">↻ Reload</button>
+        <button type="button" class="btn-clear" id="btn-export-pcg" title="UE/PCG Spline-JSON speichern">PCG Splines</button>
+        <button type="button" class="btn-clear" id="btn-export-props" title="UE/PCG Punkt-Props speichern">PCG Props</button>
+        <button type="button" class="btn-clear" id="btn-export-heightmap" title="Heightmap aus dem gewählten Bereich speichern">Heightmap</button>
+        <button type="button" class="btn-clear" id="btn-export-area-python" title="Unreal-Python-Script für Bereichs-Splines speichern">UE Python</button>
+        <button type="button" class="btn-clear" id="btn-load-edits" title="Master-JSON laden">Laden</button>
+        <button type="button" class="btn-clear" id="btn-reload" title="Aktuell geladene Datei neu einlesen">Reload</button>
       </div>
       <div class="export-box">
         <div class="row export-head">
@@ -431,16 +456,134 @@
         <button type="button" class="btn-clear" id="btn-postal-code">Ort</button>
       </div>
       <div class="layer-toggles" aria-label="Bereichs-Layer">
-        <label class="toggle"><input type="checkbox" data-area-layer="motorway"> Autobahn</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="major_road"> Hauptstrasse</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="city_road"> Stadtstrasse</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="service"> Service</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="rail_subway" checked> U-Bahn</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="bus"> Bus</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="building"> Gebäude</label>
-        <label class="toggle"><input type="checkbox" data-area-layer="tree"> Bäume</label>
+        <details class="layer-group" open>
+          <summary>Verkehr & Infrastruktur</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="motorway"> Autobahn</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="major_road"> Hauptstrasse</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="city_road"> Stadtstrasse</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="service"> Service</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="cycleway"> Radweg</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="footway"> Fußweg</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="parking"> Parkplatz</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="rail_tram"> Tram</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="rail_train"> Zug</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="rail_subway"> U-Bahn</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="bus"> Bus</label>
+          </div>
+        </details>
+        <details class="layer-group" open>
+          <summary>Gebäude & Adressen</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="building" checked> Gebäude</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="building_3d"> 3D-Dach</label>
+          </div>
+        </details>
+        <details class="layer-group" open>
+          <summary>POI & Gewerbe</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="amenity_food"> Restaurant/Cafe</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="amenity_shop"> Supermarkt</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="retail_shop"> Läden</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="amenity_fuel"> Tankstelle</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="amenity_atm"> Geldautomat</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="amenity_hotel"> Hotel</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="adult_venue"> Bordelle</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="street_prostitution"> Straßenstrich</label>
+          </div>
+        </details>
+        <details class="layer-group" open>
+          <summary>Öffentliche Einrichtungen</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="school"> Schule/Kita</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="hospital"> Krankenhaus</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="pharmacy"> Apotheke</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="place_of_worship"> Kirche/Religion</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="police"> Polizei/Feuerwehr</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="government"> Behörden</label>
+          </div>
+        </details>
+        <details class="layer-group" open>
+          <summary>Natur & Geografie</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="waterway"> Flüsse</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="water_area"> Seen/Teiche</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="forest"> Wald</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="peak"> Berge</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="tree"> Bäume</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="cliff"> Klippe</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Freizeit & Sport</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="leisure_sport"> Sportplatz</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="playground"> Spielplatz</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="picnic"> Picknick</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="bbq"> Grillplatz</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Versorgung & Entsorgung</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="power_line"> Strommast</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="pipeline"> Pipeline</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="waste_bin"> Mülleimer</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="fire_hydrant"> Hydranten</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="telecom_tower"> Funkmast</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="drinking_water"> Trinkwasser</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Stadtmöbel & Details</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="traffic_sign_node"> Verkehrsschilder</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="street_lamp"> Laternen</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="crossing"> Fußgänger</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="steps"> Treppen</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="bicycle_parking"> Fahrradständer</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="barrier"> Poller/Tore</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="post_box"> Briefkasten</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="vending_machine"> Automat</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="ev_charging"> E-Ladesäule</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Landwirtschaft</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="farmland"> Ackerland</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="vineyard"> Weinberg</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="orchard"> Obstplantage</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="hedge"> Hecke</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Nautik & Luftfahrt</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="lighthouse"> Leuchtturm</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="aeroway"> Flughafen</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Sicherheit & Krise</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="defibrillator"> AED/Defi</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="bunker"> Bunker</label>
+            <label class="toggle"><input type="checkbox" data-area-layer="siren"> Sirene</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>Tierwelt & Ökologie</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="wildlife"> Tierwelt</label>
+          </div>
+        </details>
+        <details class="layer-group">
+          <summary>FKK & Lifestyle</summary>
+          <div class="layer-group-grid">
+            <label class="toggle"><input type="checkbox" data-area-layer="nudist"> FKK</label>
+          </div>
+        </details>
       </div>
       <p id="direction" hidden></p>
       <p id="status"></p>
@@ -485,6 +628,14 @@
           <div class="path-field">
             <label for="tree-bp-path-input">Baum BP</label>
             <input id="tree-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label for="prop-bp-path-input">OSM Prop BP</label>
+            <input id="prop-bp-path-input" type="text" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="path-field">
+            <label>Heightmap</label>
+            <div style="font-size: 0.78rem; color: var(--muted)">1 m = 1 Pixel</div>
           </div>
           <div class="options-modal-actions">
             <button type="button" class="btn-clear" id="btn-generate-bp-python">BP Python</button>

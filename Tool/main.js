@@ -50,7 +50,7 @@ let uploadedJsonData = null;
 const DEFAULT_HALF_LENGTH_M = 65; // 130m Fallback wenn kein platform-Way vorhanden
 const DEFAULT_HALF_WIDTH_M = 2.7; // 5.4m Fallback
 const TRACK_BLEND_M = 30; // Hermite-Blend-Distanz am Bahnsteig-Ein-/Austritt
-const STATION_LEVEL_HEIGHT_M = 4; // Gameplay-Hoehe pro OSM-Ebene
+const STATION_LEVEL_HEIGHT_M = 4; // Gameplay-Höhe pro OSM-Ebene
 
 // masterStations: einzige Quelle der Wahrheit für Stationsdaten
 // { name, lat, lon, halfLengthM, halfWidthM, _osmLat?, _osmLon?, _osmHalfLengthM?, _osmHalfWidthM? }
@@ -70,6 +70,7 @@ let currentSourceKind = null; // "overpass" | "master"
 const SPLINE_SPACING_M = 50; // Abstand der initialen Spline-Kontrollpunkte
 const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
 const NOMINATIM_API_URL = "https://nominatim.openstreetmap.org/search";
+const ELEVATION_API_URL = "https://api.open-meteo.com/v1/elevation";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
@@ -83,6 +84,7 @@ const DEFAULT_AREA_BP_PATHS = {
   street: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   building: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
   tree: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
+  prop: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
 };
 const AREA_BP_STORAGE_KEY_PREFIX = "ubahn.areaBpPath.";
 let persistCacheTimer = null;
@@ -110,13 +112,137 @@ const AREA_STYLE = {
   major_road: { color: "#f59e0b", weight: 3.5 },
   city_road: { color: "#475569", weight: 2.5 },
   service: { color: "#94a3b8", weight: 2 },
+  cycleway: { color: "#06b6d4", weight: 2 },
+  footway: { color: "#a78bfa", weight: 1.5 },
+  parking: { color: "#6b7280", weight: 1.5 },
   rail_tram: { color: "#16a34a", weight: 3 },
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
   bus: { color: "#0891b2", weight: 2.5 },
   building: { color: "#64748b", weight: 1.2 },
+  building_3d: { color: "#f97316", weight: 1.5 },
   tree: { color: "#15803d", weight: 2 },
+  traffic_sign_node: { color: "#ef4444", weight: 2 },
+  amenity_food: { color: "#ec4899", weight: 2 },
+  amenity_shop: { color: "#8b5cf6", weight: 2 },
+  amenity_fuel: { color: "#f59e0b", weight: 2 },
+  amenity_atm: { color: "#10b981", weight: 2 },
+  amenity_hotel: { color: "#6366f1", weight: 2 },
+  retail_shop: { color: "#a855f7", weight: 2 },
+  school: { color: "#f59e0b", weight: 2 },
+  hospital: { color: "#ef4444", weight: 2 },
+  pharmacy: { color: "#10b981", weight: 2 },
+  place_of_worship: { color: "#78716c", weight: 1.5 },
+  police: { color: "#1d4ed8", weight: 2 },
+  government: { color: "#334155", weight: 2 },
+  adult_venue: { color: "#be185d", weight: 2 },
+  street_prostitution: { color: "#f43f5e", weight: 2 },
+  waterway: { color: "#3b82f6", weight: 2.5 },
+  water_area: { color: "#3b82f6", weight: 1.5 },
+  forest: { color: "#15803d", weight: 1.5 },
+  peak: { color: "#92400e", weight: 2 },
+  cliff: { color: "#78716c", weight: 2 },
+  leisure_sport: { color: "#22d3ee", weight: 1.5 },
+  playground: { color: "#fb923c", weight: 1.5 },
+  picnic: { color: "#84cc16", weight: 2 },
+  bbq: { color: "#f97316", weight: 2 },
+  ev_charging: { color: "#a3e635", weight: 2 },
+  crossing: { color: "#fde68a", weight: 2 },
+  steps: { color: "#d1d5db", weight: 2 },
+  power_line: { color: "#fcd34d", weight: 1.5 },
+  pipeline: { color: "#b45309", weight: 1.5 },
+  waste_bin: { color: "#6b7280", weight: 2 },
+  telecom_tower: { color: "#818cf8", weight: 2 },
+  roof_shape: { color: "#fb923c", weight: 1 },
+  farmland: { color: "#a3e635", weight: 1.5 },
+  vineyard: { color: "#84cc16", weight: 1.5 },
+  orchard: { color: "#4ade80", weight: 1.5 },
+  hedge: { color: "#166534", weight: 1.5 },
+  lighthouse: { color: "#fcd34d", weight: 2 },
+  aeroway: { color: "#64748b", weight: 2 },
+  defibrillator: { color: "#ef4444", weight: 2 },
+  bunker: { color: "#374151", weight: 2 },
+  siren: { color: "#f97316", weight: 2 },
+  post_box: { color: "#dc2626", weight: 2 },
+  drinking_water: { color: "#38bdf8", weight: 2 },
+  vending_machine: { color: "#a855f7", weight: 2 },
+  wildlife: { color: "#65a30d", weight: 2 },
+  nudist: { color: "#fb7185", weight: 2 },
+  street_lamp: { color: "#facc15", weight: 2 },
+  bicycle_parking: { color: "#0ea5e9", weight: 2 },
+  barrier: { color: "#7f1d1d", weight: 2 },
+  fire_hydrant: { color: "#dc2626", weight: 2 },
 };
+
+const AREA_SPLINE_CATEGORIES = new Set([
+  "motorway",
+  "major_road",
+  "city_road",
+  "service",
+  "cycleway",
+  "footway",
+  "parking",
+  "rail_tram",
+  "rail_train",
+  "rail_subway",
+  "bus",
+  "waterway",
+  "water_area",
+  "forest",
+  "cliff",
+  "leisure_sport",
+  "playground",
+  "steps",
+  "power_line",
+  "pipeline",
+  "farmland",
+  "vineyard",
+  "orchard",
+  "hedge",
+  "aeroway",
+  "nudist",
+]);
+
+const AREA_PROP_CATEGORIES = new Set([
+  "traffic_sign_node",
+  "amenity_food",
+  "amenity_shop",
+  "amenity_fuel",
+  "amenity_atm",
+  "amenity_hotel",
+  "retail_shop",
+  "school",
+  "hospital",
+  "pharmacy",
+  "place_of_worship",
+  "police",
+  "government",
+  "adult_venue",
+  "street_prostitution",
+  "peak",
+  "picnic",
+  "bbq",
+  "bicycle_parking",
+  "ev_charging",
+  "crossing",
+  "steps",
+  "power_line",
+  "waste_bin",
+  "fire_hydrant",
+  "telecom_tower",
+  "lighthouse",
+  "defibrillator",
+  "bunker",
+  "siren",
+  "post_box",
+  "drinking_water",
+  "vending_machine",
+  "street_lamp",
+  "wildlife",
+  "nudist",
+]);
+
+const AREA_PCG_PROP_CATEGORIES = new Set([...AREA_PROP_CATEGORIES, "tree"]);
 
 const AREA_SIMPLIFY_TOLERANCE_M = 3;
 const AREA_SEGMENT_SPACING_M = 10;
@@ -136,16 +262,69 @@ const AREA_LAYER_LABELS = {
   major_road: "Hauptstrasse",
   city_road: "Stadtstrasse",
   service: "Service",
+  cycleway: "Radweg",
+  footway: "Fußweg",
+  parking: "Parkplatz",
   rail_tram: "Tram",
   rail_train: "Zug",
   rail_subway: "U-Bahn",
   bus: "Bus",
-  building: "Gebaeude",
-  tree: "Baeume",
+  building: "Gebäude",
+  building_3d: "3D-Dach",
+  tree: "Bäume",
+  traffic_sign_node: "Verkehrsschilder",
+  amenity_food: "Restaurant/Cafe",
+  amenity_shop: "Supermarkt",
+  amenity_fuel: "Tankstelle",
+  amenity_atm: "Geldautomat",
+  amenity_hotel: "Hotel",
+  retail_shop: "Läden",
+  school: "Schule/Kita",
+  hospital: "Krankenhaus",
+  pharmacy: "Apotheke",
+  place_of_worship: "Kirche/Religion",
+  police: "Polizei",
+  government: "Behörden",
+  adult_venue: "Bordelle",
+  street_prostitution: "Straßenstrich",
+  waterway: "Flüsse",
+  water_area: "Seen/Teiche",
+  forest: "Wald",
+  peak: "Berge",
+  cliff: "Klippe",
+  leisure_sport: "Sportplatz",
+  playground: "Spielplatz",
+  picnic: "Picknick",
+  bbq: "Grillplatz",
+  ev_charging: "E-Ladesäule",
+  crossing: "Fußgänger",
+  steps: "Treppen",
+  power_line: "Strommast",
+  pipeline: "Pipeline",
+  waste_bin: "Mülleimer",
+  telecom_tower: "Funkmast",
+  farmland: "Ackerland",
+  vineyard: "Weinberg",
+  orchard: "Obstplantage",
+  hedge: "Hecke",
+  lighthouse: "Leuchtturm",
+  aeroway: "Flughafen",
+  defibrillator: "AED/Defi",
+  bunker: "Bunker",
+  siren: "Sirene",
+  post_box: "Briefkasten",
+  drinking_water: "Trinkwasser",
+  vending_machine: "Automat",
+  wildlife: "Tierwelt",
+  nudist: "FKK",
+  street_lamp: "Laternen",
+  bicycle_parking: "Fahrradständer",
+  barrier: "Poller/Tore",
+  fire_hydrant: "Hydranten",
 };
 
 const areaLayerVisibility = new Map(
-  Object.keys(AREA_LAYER_LABELS).map((key) => [key, key === "rail_subway"]),
+  Object.keys(AREA_LAYER_LABELS).map((key) => [key, key === "building"]),
 );
 
 let areaSelectionBounds = null;
@@ -257,7 +436,7 @@ function loadSavedAreaSelection(name) {
   if (!selection) return;
   const bounds = plainBoundsToLatLngBounds(selection.bounds);
   if (!bounds?.isValid?.()) {
-    setStatus(`Selection ist ungueltig: ${name}`, true);
+    setStatus(`Selection ist ungültig: ${name}`, true);
     return;
   }
   setSelectedAreaCategories(selection.layers || []);
@@ -269,7 +448,7 @@ function deleteSavedAreaSelection() {
   const select = document.getElementById("area-selection-preset");
   const name = select?.value || "";
   if (!name) {
-    setStatus("Keine gespeicherte Selection gewaehlt.", true);
+    setStatus("Keine gespeicherte Selection gewählt.", true);
     return;
   }
   const selections = readSavedAreaSelections().filter((entry) => entry.name !== name);
@@ -1033,7 +1212,8 @@ function loadCachedOverpassDataset() {
 function buildMasterStatePayload(ref) {
   if (!masterStations || masterStations.length === 0) return null;
   const ctrlPts =
-    customControlPoints ??
+    customControlPoints ?
+    customControlPoints :
     (lastComputedCenterline ? subsampleToControlPoints(lastComputedCenterline) : null);
   if (!ctrlPts || ctrlPts.length < 2) return null;
   return {
@@ -1091,8 +1271,8 @@ function normalizeAreaKey(sourceValue) {
   const replacements = new Map([
     ["\u00c4", "Ae"], ["\u00d6", "Oe"], ["\u00dc", "Ue"],
     ["\u00e4", "ae"], ["\u00f6", "oe"], ["\u00fc", "ue"], ["\u00df", "ss"],
-    ["Ã„", "Ae"], ["Ã–", "Oe"], ["Ãœ", "Ue"],
-    ["Ã¤", "ae"], ["Ã¶", "oe"], ["Ã¼", "ue"], ["ÃŸ", "ss"],
+    ["Ä", "Ae"], ["Ö", "Oe"], ["Ü", "Ue"],
+    ["ä", "ae"], ["ö", "oe"], ["ü", "ue"], ["ß", "ss"],
   ]);
   for (const [from, to] of replacements) normalized = normalized.split(from).join(to);
 
@@ -1112,6 +1292,7 @@ function normalizeAreaKey(sourceValue) {
 
 function classifyAreaWay(tags = {}) {
   if (tags.building && tags.building !== "no") return "building";
+  if (tags["roof:shape"] || tags["building:roof:shape"] || tags["building:part"]) return "building_3d";
   const highway = tags.highway;
   if (highway) {
     if (["motorway", "motorway_link", "trunk", "trunk_link"].includes(highway)) return "motorway";
@@ -1120,17 +1301,77 @@ function classifyAreaWay(tags = {}) {
       return "city_road";
     }
     if (highway === "service") return "service";
+    if (["cycleway", "path"].includes(highway) && (tags.bicycle === "designated" || highway === "cycleway")) return "cycleway";
+    if (["footway", "pedestrian", "path"].includes(highway)) return "footway";
+    if (highway === "steps") return "steps";
   }
 
   const railway = tags.railway;
   if (railway === "tram") return "rail_tram";
   if (railway === "subway") return "rail_subway";
   if (railway === "rail" || railway === "light_rail") return "rail_train";
+  if (tags.landuse === "farmland" || tags.landuse === "farmyard") return "farmland";
+  if (tags.landuse === "vineyard" || tags.vineyard) return "vineyard";
+  if (tags.landuse === "orchard") return "orchard";
+  if (tags.landuse === "forest" || tags.natural === "wood" || tags.wood) return "forest";
+  if (tags.natural === "water" || tags.landuse === "reservoir" || tags.landuse === "basin") return "water_area";
+  if (tags.waterway) return "waterway";
+  if (tags.natural === "cliff") return "cliff";
+  if (tags.barrier === "hedge") return "hedge";
+  if (["pitch", "stadium", "sports_centre", "track", "swimming_pool", "park", "garden"].includes(tags.leisure)) return "leisure_sport";
+  if (tags.leisure === "playground") return "playground";
+  if (tags.power === "line" || tags.power === "minor_line") return "power_line";
+  if (tags.man_made === "pipeline") return "pipeline";
+  if (tags.aeroway) return "aeroway";
+  if (tags.nudism === "yes" || tags.clothing === "optional") return "nudist";
+  if (tags.office === "government" || tags.government || tags.amenity === "townhall" || tags.amenity === "courthouse") return "government";
+  if (tags.prostitution || tags["prostitution:type"]) return "street_prostitution";
+  if (tags.amenity === "brothel" || tags.shop === "erotic" || tags.adult) return "adult_venue";
+  if (tags.shop === "supermarket") return "amenity_shop";
+  if (tags.shop) return "retail_shop";
+  if (tags["parking:fee"] || tags.leisure === "parking" || tags.amenity === "parking") return "parking";
   return null;
 }
 
 function classifyAreaNode(tags = {}) {
   if (tags.natural === "tree") return "tree";
+  if (tags.highway === "traffic_signals" || tags.traffic_sign || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
+  if (["restaurant", "cafe", "fast_food", "bar", "pub", "food_court"].includes(tags.amenity)) return "amenity_food";
+  if (tags.shop === "supermarket") return "amenity_shop";
+  if (tags.shop) return "retail_shop";
+  if (tags.amenity === "fuel") return "amenity_fuel";
+  if (tags.amenity === "atm" || tags.amenity === "bank") return "amenity_atm";
+  if (["hotel", "hostel", "guest_house"].includes(tags.tourism) || tags.amenity === "hotel") return "amenity_hotel";
+  if (["school", "kindergarten", "university", "college"].includes(tags.amenity)) return "school";
+  if (tags.amenity === "hospital" || tags.amenity === "clinic") return "hospital";
+  if (tags.amenity === "pharmacy") return "pharmacy";
+  if (tags.amenity === "place_of_worship" || tags.religion) return "place_of_worship";
+  if (tags.amenity === "police" || tags.amenity === "fire_station") return "police";
+  if (tags.office === "government" || tags.government || tags.amenity === "townhall" || tags.amenity === "courthouse") return "government";
+  if (tags.prostitution || tags["prostitution:type"]) return "street_prostitution";
+  if (tags.amenity === "brothel" || tags.shop === "erotic" || tags.adult) return "adult_venue";
+  if (tags.natural === "peak" || tags.natural === "volcano") return "peak";
+  if (tags.leisure === "picnic_table" || tags.amenity === "picnic_site" || tags.amenity === "shelter") return "picnic";
+  if (tags.amenity === "bbq" || tags.bbq || tags["amenity:bbq"] || tags.leisure === "firepit") return "bbq";
+  if (tags.amenity === "charging_station") return "ev_charging";
+  if (tags.highway === "crossing" || tags.crossing) return "crossing";
+  if (tags.highway === "steps") return "steps";
+  if (tags.power === "tower" || tags.power === "pole") return "power_line";
+  if (tags.amenity === "waste_basket" || tags.amenity === "waste_disposal") return "waste_bin";
+  if (tags.man_made === "mast" || (tags.man_made === "tower" && tags["tower:type"] === "communication")) return "telecom_tower";
+  if (tags.man_made === "lighthouse") return "lighthouse";
+  if (tags.amenity === "defibrillator" || tags.emergency === "defibrillator") return "defibrillator";
+  if (tags.building === "bunker" || tags.military === "bunker" || tags.military === "shelter") return "bunker";
+  if (tags.emergency === "siren") return "siren";
+  if (tags.amenity === "post_box") return "post_box";
+  if (tags.amenity === "drinking_water" || tags.amenity === "water_point") return "drinking_water";
+  if (tags.amenity === "vending_machine") return "vending_machine";
+  if (tags.highway === "street_lamp" || tags.man_made === "street_lamp") return "street_lamp";
+  if (tags.amenity === "bicycle_parking") return "bicycle_parking";
+  if (["bollard", "cycle_barrier", "gate", "lift_gate", "block"].includes(tags.barrier)) return "barrier";
+  if (tags.emergency === "fire_hydrant") return "fire_hydrant";
+  if (tags.wildlife || tags.amenity === "insect_hotel" || tags.amenity === "animal_shelter" || tags["species:animal"]) return "wildlife";
+  if (tags.nudism === "yes" || tags.clothing === "optional") return "nudist";
   return null;
 }
 
@@ -1144,6 +1385,12 @@ function areaOverpassFilterForCategory(category) {
       return 'way["highway"~"^(tertiary|tertiary_link|unclassified|residential|living_street|road)$"]';
     case "service":
       return 'way["highway"="service"]';
+    case "cycleway":
+      return 'way["highway"~"^(cycleway|path)$"]["bicycle"~"^(designated|yes)$"]';
+    case "footway":
+      return 'way["highway"~"^(footway|pedestrian|path)$"]';
+    case "parking":
+      return ['way["amenity"="parking"]', 'way["leisure"="parking"]'];
     case "rail_tram":
       return 'way["railway"="tram"]';
     case "rail_train":
@@ -1154,8 +1401,108 @@ function areaOverpassFilterForCategory(category) {
       return null;
     case "building":
       return 'way["building"]';
+    case "building_3d":
+      return ['way["roof:shape"]', 'way["building:part"]'];
     case "tree":
       return 'node["natural"="tree"]';
+    case "traffic_sign_node":
+      return ['node["highway"="traffic_signals"]', 'node["traffic_sign"]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
+    case "amenity_food":
+      return 'node["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court)$"]';
+    case "amenity_shop":
+      return ['node["shop"="supermarket"]', 'way["shop"="supermarket"]'];
+    case "retail_shop":
+      return ['node["shop"]', 'way["shop"]'];
+    case "amenity_fuel":
+      return 'node["amenity"="fuel"]';
+    case "amenity_atm":
+      return 'node["amenity"~"^(atm|bank)$"]';
+    case "amenity_hotel":
+      return ['node["tourism"~"^(hotel|hostel|guest_house)$"]', 'node["amenity"="hotel"]'];
+    case "school":
+      return 'node["amenity"~"^(school|kindergarten|university|college)$"]';
+    case "hospital":
+      return 'node["amenity"~"^(hospital|clinic)$"]';
+    case "pharmacy":
+      return 'node["amenity"="pharmacy"]';
+    case "place_of_worship":
+      return 'node["amenity"="place_of_worship"]';
+    case "police":
+      return 'node["amenity"~"^(police|fire_station)$"]';
+    case "government":
+      return ['node["office"="government"]', 'node["government"]', 'node["amenity"~"^(townhall|courthouse)$"]', 'way["office"="government"]', 'way["government"]', 'way["amenity"~"^(townhall|courthouse)$"]'];
+    case "adult_venue":
+      return ['node["amenity"="brothel"]', 'node["shop"="erotic"]', 'node["adult"]', 'way["amenity"="brothel"]', 'way["shop"="erotic"]', 'way["adult"]'];
+    case "street_prostitution":
+      return ['node["prostitution"]', 'node["prostitution:type"]', 'way["prostitution"]', 'way["prostitution:type"]'];
+    case "waterway":
+      return 'way["waterway"]';
+    case "water_area":
+      return ['way["natural"="water"]', 'way["landuse"~"^(reservoir|basin)$"]'];
+    case "forest":
+      return ['way["natural"="wood"]', 'way["landuse"="forest"]'];
+    case "peak":
+      return 'node["natural"~"^(peak|volcano)$"]';
+    case "cliff":
+      return 'way["natural"="cliff"]';
+    case "leisure_sport":
+      return 'way["leisure"~"^(pitch|stadium|sports_centre|track|swimming_pool|park|garden)$"]';
+    case "playground":
+      return 'way["leisure"="playground"]';
+    case "picnic":
+      return ['node["leisure"="picnic_table"]', 'node["amenity"~"^(picnic_site|shelter)$"]'];
+    case "bbq":
+      return 'node["amenity"="bbq"]';
+    case "street_lamp":
+      return 'node[~"^(highway|man_made)$"~"^street_lamp$"]';
+    case "bicycle_parking":
+      return 'node["amenity"="bicycle_parking"]';
+    case "ev_charging":
+      return 'node["amenity"="charging_station"]';
+    case "crossing":
+      return 'node["highway"="crossing"]';
+    case "steps":
+      return ['way["highway"="steps"]', 'node["highway"="steps"]'];
+    case "power_line":
+      return ['way["power"~"^(line|minor_line)$"]', 'node["power"~"^(tower|pole)$"]'];
+    case "pipeline":
+      return 'way["man_made"="pipeline"]';
+    case "waste_bin":
+      return 'node["amenity"~"^(waste_basket|waste_disposal)$"]';
+    case "barrier":
+      return 'node["barrier"~"^(bollard|cycle_barrier|gate|lift_gate|block)$"]';
+    case "fire_hydrant":
+      return 'node["emergency"="fire_hydrant"]';
+    case "telecom_tower":
+      return ['node["man_made"="mast"]', 'node["man_made"="tower"]["tower:type"="communication"]'];
+    case "farmland":
+      return 'way["landuse"~"^(farmland|farmyard)$"]';
+    case "vineyard":
+      return 'way["landuse"="vineyard"]';
+    case "orchard":
+      return 'way["landuse"="orchard"]';
+    case "hedge":
+      return 'way["barrier"="hedge"]';
+    case "lighthouse":
+      return 'node["man_made"="lighthouse"]';
+    case "aeroway":
+      return 'way["aeroway"]';
+    case "defibrillator":
+      return ['node["amenity"="defibrillator"]', 'node["emergency"="defibrillator"]'];
+    case "bunker":
+      return 'node["military"~"^(bunker|shelter)$"]';
+    case "siren":
+      return 'node["emergency"="siren"]';
+    case "post_box":
+      return 'node["amenity"="post_box"]';
+    case "drinking_water":
+      return 'node["amenity"~"^(drinking_water|water_point)$"]';
+    case "vending_machine":
+      return 'node["amenity"="vending_machine"]';
+    case "wildlife":
+      return ['node["wildlife"]', 'node["amenity"="insect_hotel"]', 'node["amenity"="animal_shelter"]'];
+    case "nudist":
+      return ['way["nudism"="yes"]', 'way["clothing"="optional"]', 'node["nudism"="yes"]', 'node["clothing"="optional"]'];
     default:
       return null;
   }
@@ -1179,12 +1526,13 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
   const clauses = categories
     .map(areaOverpassFilterForCategory)
     .filter(Boolean)
+    .flatMap((filter) => Array.isArray(filter) ? filter : [filter])
     .map((filter) => `  ${filter}(${bbox});`)
     .join("\n");
   const relationClauses = areaRouteModesForCategories(categories)
     .map((mode) => `  relation["type"="route"]["route"="${mode}"](${bbox});`)
     .join("\n");
-  if (!clauses && !relationClauses) throw new Error("Keine Bereichs-Layer fuer Overpass ausgewaehlt.");
+  if (!clauses && !relationClauses) throw new Error("Keine Bereichs-Layer für Overpass ausgewählt.");
   return `[out:json][timeout:120];
 (
 ${clauses}${relationClauses ? `\n${relationClauses}` : ""}
@@ -1469,7 +1817,7 @@ function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
       const ref = tags.ref || tags.route_ref || "";
       const name = tags.name || (ref ? `Bus ${ref}` : `Bus ${relation.id}`);
       const key = normalizeAreaKey(`bus_${ref || name}_${relation.id}_${partIndex}`);
-      if (!key) throw new Error(`Bus-Relation ${relation.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      if (!key) throw new Error(`Bus-Relation ${relation.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
       features.push({
         id: relation.id,
         key,
@@ -1502,7 +1850,7 @@ function buildAreaFeatures(data, bounds) {
       const tags = el.tags || {};
       const name = areaGroupName(tags, category, el.id);
       const key = normalizeAreaKey(`${category}_${name}_${el.id}`);
-      if (!key) throw new Error(`Node ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      if (!key) throw new Error(`Node ${el.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
       features.push({
         id: el.id,
         key,
@@ -1542,7 +1890,7 @@ function buildAreaFeatures(data, bounds) {
       seenSignatures.add(signature);
       const name = areaGroupName(tags, category, el.id);
       const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
-      if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gueltigen Key normalisiert werden.`);
+      if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
       features.push({
         id: el.id,
         key,
@@ -1567,7 +1915,7 @@ function buildAreaFeatures(data, bounds) {
 }
 
 function areaFeatureLabel(feature) {
-  const roadType = feature.tags.highway || feature.tags.railway || feature.tags.route || feature.tags.natural || "";
+  const roadType = areaFeatureExportClass(feature);
   const shape = feature.shape === "roundabout" ? " · Ringverkehr" : "";
   return `${AREA_LAYER_LABELS[feature.category]}: ${feature.name} (${roadType})${shape}`;
 }
@@ -1789,7 +2137,7 @@ function renderAreaSelectionEditor() {
 
 function setAreaSelectionBounds(bounds, statusPrefix = "Bereich markiert") {
   if (!bounds?.isValid?.()) {
-    setStatus("Bereichsauswahl ist ungueltig.", true);
+    setStatus("Bereichsauswahl ist ungültig.", true);
     return;
   }
   areaSelectionBounds = bounds;
@@ -2053,7 +2401,8 @@ function exportToUnreal(buildOnly = false) {
     return;
   }
   const ctrlPts =
-    customControlPoints ??
+    customControlPoints ?
+    customControlPoints :
     (lastComputedCenterline ? subsampleToControlPoints(lastComputedCenterline) : null);
   if (!ctrlPts || ctrlPts.length < 2) {
     setStatus("Kein Spline für UE-Export vorhanden.", true);
@@ -2113,7 +2462,7 @@ function exportToUnreal(buildOnly = false) {
     ];
   }
 
-  // Stationen auf finale Web-Route projizieren, danach Hoehen entlang der Route interpolieren.
+  // Stationen auf finale Web-Route projizieren, danach Höhen entlang der Route interpolieren.
   const finalStations = masterStations.map((s) => ({
     ...projectOntoTrack([s.lat, s.lon], finalTrack),
     name: s.name,
@@ -2353,7 +2702,8 @@ function exportMaster() {
     return;
   }
   const ctrlPts =
-    customControlPoints ??
+    customControlPoints ?
+    customControlPoints :
     (lastComputedCenterline ? subsampleToControlPoints(lastComputedCenterline) : null);
   if (!ctrlPts) {
     setStatus("Kein Track für Export vorhanden.", true);
@@ -2387,7 +2737,24 @@ function exportMaster() {
 }
 
 function areaFeatureExportClass(feature) {
-  return feature.tags.highway || feature.tags.railway || feature.tags.route || "";
+  return feature.tags.highway ||
+    feature.tags.railway ||
+    feature.tags.route ||
+    feature.tags.building ||
+    feature.tags.natural ||
+    feature.tags.traffic_sign ||
+    feature.tags.amenity ||
+    feature.tags.shop ||
+    feature.tags.tourism ||
+    feature.tags.leisure ||
+    feature.tags.landuse ||
+    feature.tags.power ||
+    feature.tags.waterway ||
+    feature.tags.aeroway ||
+    feature.tags.barrier ||
+    feature.tags.emergency ||
+    feature.tags.man_made ||
+    "";
 }
 
 function areaTagBool(value) {
@@ -2433,6 +2800,34 @@ function treeType(tags = {}) {
   return tags.species || tags.genus || tags.taxon || tags.leaf_type || tags.leaf_cycle || tags.denotation || "tree";
 }
 
+function propType(tags = {}, category = "prop") {
+  return tags.traffic_sign ||
+    tags.highway ||
+    tags.man_made ||
+    tags.amenity ||
+    tags.barrier ||
+    tags.emergency ||
+    tags.ref ||
+    category;
+}
+
+function addressFromTags(tags = {}) {
+  const street = String(tags["addr:street"] || tags["addr:place"] || "").trim();
+  const houseNumber = String(tags["addr:housenumber"] || "").trim();
+  const postcode = String(tags["addr:postcode"] || "").trim();
+  const city = String(tags["addr:city"] || tags["addr:suburb"] || "").trim();
+  const full = String(tags["addr:full"] || "").trim();
+  const line1 = [street, houseNumber].filter(Boolean).join(" ");
+  const line2 = [postcode, city].filter(Boolean).join(" ");
+  return {
+    street,
+    houseNumber,
+    postcode,
+    city,
+    full: full || [line1, line2].filter(Boolean).join(", "),
+  };
+}
+
 function areaFeatureWidthM(feature) {
   const explicitWidth = areaTagFloat(feature.tags.width);
   if (explicitWidth != null) return explicitWidth;
@@ -2470,7 +2865,10 @@ function areaPcgRowName(key, pointIndex) {
 
 function buildAreaPcgSplines() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
+      areaLayerVisibility.get(feature.category) &&
+      Array.isArray(feature.controlGeometry) &&
+      feature.controlGeometry.length >= 2,
   );
   if (!selected.length) return null;
 
@@ -2490,12 +2888,13 @@ function buildAreaPcgSplines() {
 
   const rows = [];
   for (const feature of selected) {
-    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
     const controlPoints = feature.controlGeometry.map(toPointCm);
     const pointCount = controlPoints.length;
     const bClosed = Boolean(feature.closed || isClosedPolyline(feature.controlGeometry));
     controlPoints.forEach((point, pointIndex) => {
       rows.push({
+        ObjectType: "OSM_SPLINE_POINT",
         Name: areaPcgRowName(feature.key, pointIndex),
         SplineKey: feature.key,
         PointIndex: pointIndex,
@@ -2519,7 +2918,10 @@ function buildAreaPcgSplines() {
 
 function buildAreaPythonSplineData() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 2,
+    (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
+      areaLayerVisibility.get(feature.category) &&
+      Array.isArray(feature.controlGeometry) &&
+      feature.controlGeometry.length >= 2,
   );
   if (!selected.length) return null;
 
@@ -2538,8 +2940,9 @@ function buildAreaPythonSplineData() {
   }
 
   return selected.map((feature) => {
-    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gueltigen Export-Key.`);
+    if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
     return {
+      ObjectType: "OSM_SPLINE",
       SplineKey: feature.key,
       Type: feature.category,
       Shape: feature.shape || "line",
@@ -2644,11 +3047,18 @@ function buildBuildingData(selected, transform) {
       const metrics = buildingFootprintMetrics(feature, transform);
       if (!metrics) return null;
       const heightCm = +buildingHeightCm(feature.tags).toFixed(1);
+      const address = addressFromTags(feature.tags);
       return {
+        ObjectType: "OSM_BUILDING",
         BuildingKey: feature.key,
         OsmId: feature.id,
         Name: feature.name || feature.key,
         Type: feature.tags.building || "building",
+        Address: address.full,
+        AddressStreet: address.street,
+        AddressHouseNumber: address.houseNumber,
+        AddressPostcode: address.postcode,
+        AddressCity: address.city,
         FootprintCm: metrics.footprintCm,
         WidthCm: metrics.widthCm,
         DepthCm: metrics.depthCm,
@@ -2675,6 +3085,7 @@ function buildTreeData(selected, transform) {
       const heightCm = +treeHeightCm(feature.tags).toFixed(1);
       const crownDiameterCm = +treeCrownDiameterCm(feature.tags).toFixed(1);
       return {
+        ObjectType: "OSM_TREE",
         TreeKey: feature.key,
         OsmId: feature.id,
         Name: feature.name || feature.key,
@@ -2698,6 +3109,68 @@ function buildTreeData(selected, transform) {
     });
 }
 
+function featureCenterPoint(feature) {
+  const geometry = feature.controlGeometry || [];
+  if (!geometry.length) return null;
+  if (geometry.length === 1) return geometry[0];
+  const lats = geometry.map((point) => point[0]);
+  const lons = geometry.map((point) => point[1]);
+  return [
+    (Math.min(...lats) + Math.max(...lats)) * 0.5,
+    (Math.min(...lons) + Math.max(...lons)) * 0.5,
+  ];
+}
+
+function buildPropData(selected, transform, categories = AREA_PROP_CATEGORIES) {
+  return selected
+    .filter((feature) => categories.has(feature.category) && feature.controlGeometry.length >= 1)
+    .map((feature) => {
+      const center = featureCenterPoint(feature);
+      if (!center) return null;
+      const [lat, lon] = center;
+      const location = transform.toPointCm(center);
+      const heightCm = +(areaTagFloat(feature.tags.height) ? areaTagFloat(feature.tags.height) * 100 : 100).toFixed(1);
+      const address = addressFromTags(feature.tags);
+      return {
+        ObjectType: "OSM_PROP",
+        PropKey: feature.key,
+        OsmId: feature.id,
+        Category: feature.category,
+        Name: feature.name || feature.key,
+        Type: propType(feature.tags, feature.category),
+        Ref: feature.tags.ref || "",
+        Address: address.full,
+        AddressStreet: address.street,
+        AddressHouseNumber: address.houseNumber,
+        AddressPostcode: address.postcode,
+        AddressCity: address.city,
+        Direction: areaTagFloat(feature.tags.direction) ?? null,
+        HeightCm: Math.max(10, heightCm),
+        X: location.X,
+        Y: location.Y,
+        Z: 0,
+        Wgs84: {
+          lat: +lat.toFixed(7),
+          lon: +lon.toFixed(7),
+        },
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildAreaPcgProps() {
+  const selected = areaFeatures.filter(
+    (feature) => AREA_PCG_PROP_CATEGORIES.has(feature.category) &&
+      areaLayerVisibility.get(feature.category) &&
+      Array.isArray(feature.controlGeometry) &&
+      feature.controlGeometry.length >= 1,
+  );
+  if (!selected.length) return null;
+  const transform = buildAreaExportTransform(selected);
+  if (!transform) return null;
+  return buildPropData(selected, transform, AREA_PCG_PROP_CATEGORIES);
+}
+
 function buildAreaPythonExportPayload() {
   const selected = areaFeatures.filter(
     (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1,
@@ -2709,9 +3182,10 @@ function buildAreaPythonExportPayload() {
   const splines = buildAreaPythonSplineData() || [];
   return {
     origin_wgs84: transform.originWgs84,
-    splines: splines.filter((row) => row.Type !== "building"),
+    splines: splines.filter((row) => AREA_SPLINE_CATEGORIES.has(row.Type)),
     buildings: buildBuildingData(selected, transform),
     trees: buildTreeData(selected, transform),
+    props: buildPropData(selected, transform),
   };
 }
 
@@ -2719,7 +3193,7 @@ function exportAreaPcgSplines() {
   try {
     const payload = buildAreaPcgSplines();
     if (!payload) {
-      setStatus("Keine sichtbaren Bereichsdaten fuer PCG-Export vorhanden.", true);
+      setStatus("Keine sichtbaren Bereichsdaten für PCG-Export vorhanden.", true);
       return;
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -2734,237 +3208,450 @@ function exportAreaPcgSplines() {
   }
 }
 
-function buildAreaUnrealPythonScript(rows) {
-  const jsonText = JSON.stringify(rows, null, 2);
-  const jsonLiteral = JSON.stringify(jsonText);
-  return `import json
-import re
-
-import unreal
-
-
-STREET_ROWS = json.loads(${jsonLiteral})
-ACTOR_LABEL_PREFIX = "CITY_STREET"
-SPLINE_COMPONENT_NAME = "StreetSpline"
-WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
-FORCE_ZERO_Z = True
-LINEAR_SPLINES = True
-
-
-def log(level, message):
-    unreal.log(f"[{level}] {message}")
-
-
-def fail(message):
-    unreal.log_error(message)
-    raise RuntimeError(message)
-
-
-def destroy_existing_actor_with_prefix(prefix):
-    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
-        if actor.get_actor_label().startswith(prefix):
-            unreal.EditorLevelLibrary.destroy_actor(actor)
-
-
-def require_key(row, key, row_index):
-    if key not in row:
-        fail(f"Row {row_index} is missing required key '{key}': {row}")
-    return row[key]
-
-
-def require_string(row, key, row_index):
-    value = require_key(row, key, row_index)
-    if not isinstance(value, str) or not value:
-        fail(f"Row {row_index} key '{key}' must be a non-empty string")
-    return value
-
-
-def require_int(row, key, row_index):
-    value = require_key(row, key, row_index)
-    if isinstance(value, bool) or not isinstance(value, int):
-        fail(f"Row {row_index} key '{key}' must be an integer")
-    return value
-
-
-def require_bool(row, key, row_index):
-    value = require_key(row, key, row_index)
-    if not isinstance(value, bool):
-        fail(f"Row {row_index} key '{key}' must be a bool")
-    return value
-
-
-def require_number(row, key, row_index):
-    value = require_key(row, key, row_index)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        fail(f"Row {row_index} key '{key}' must be numeric")
-    return float(value)
-
-
-def validate_row(row, row_index):
-    if not isinstance(row, dict):
-        fail(f"Row {row_index} must be a JSON object")
-
-    return {
-        "Name": require_string(row, "Name", row_index),
-        "SplineKey": require_string(row, "SplineKey", row_index),
-        "PointIndex": require_int(row, "PointIndex", row_index),
-        "PointCount": require_int(row, "PointCount", row_index),
-        "Type": require_string(row, "Type", row_index),
-        "Shape": require_string(row, "Shape", row_index),
-        "Street": str(row.get("Street", "")),
-        "OsmClass": str(row.get("OsmClass", "")),
-        "bBridge": require_bool(row, "bBridge", row_index),
-        "bTunnel": require_bool(row, "bTunnel", row_index),
-        "OsmLayer": require_int(row, "OsmLayer", row_index),
-        "bClosed": require_bool(row, "bClosed", row_index),
-        "X": require_number(row, "X", row_index),
-        "Y": require_number(row, "Y", row_index),
-        "Z": require_number(row, "Z", row_index),
+function exportAreaPcgProps() {
+  try {
+    const payload = buildAreaPcgProps();
+    if (!payload?.length) {
+      setStatus("Keine sichtbaren Punkt-Props für PCG-Export vorhanden.", true);
+      return;
     }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ue-pcg-props.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`PCG-Props-Export: ${payload.length} Props`);
+  } catch (error) {
+    setStatus(`PCG-Props-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
 
+const HEIGHTMAP_METERS_PER_PIXEL = 1;
+const HEIGHTMAP_MAX_TARGET_PIXELS = 16 * 1024 * 1024;
+const HEIGHTMAP_MAX_SOURCE_SAMPLES = 300;
 
-def group_rows(rows):
-    groups = {}
-    for row_index, row in enumerate(rows):
-        validated = validate_row(row, row_index)
-        groups.setdefault(validated["SplineKey"], []).append(validated)
-    if not groups:
-        fail("No street spline rows found")
-    return groups
+function heightmapTargetGrid(bounds) {
+  const widthM = haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getSouth(), bounds.getEast()]);
+  const heightM = haversineM([bounds.getSouth(), bounds.getWest()], [bounds.getNorth(), bounds.getWest()]);
+  const width = Math.max(2, Math.round(widthM / HEIGHTMAP_METERS_PER_PIXEL) + 1);
+  const height = Math.max(2, Math.round(heightM / HEIGHTMAP_METERS_PER_PIXEL) + 1);
+  return { width, height, widthM, heightM, metersPerPixel: HEIGHTMAP_METERS_PER_PIXEL };
+}
 
+function heightmapSourceGrid(targetGrid) {
+  const targetSamples = targetGrid.width * targetGrid.height;
+  const scale = Math.min(1, Math.sqrt(HEIGHTMAP_MAX_SOURCE_SAMPLES / targetSamples));
+  return {
+    width: Math.max(2, Math.round(targetGrid.width * scale)),
+    height: Math.max(2, Math.round(targetGrid.height * scale)),
+  };
+}
 
-def validate_group(spline_key, rows):
-    point_counts = {row["PointCount"] for row in rows}
-    if len(point_counts) != 1:
-        fail(f"Spline '{spline_key}' has inconsistent PointCount values: {sorted(point_counts)}")
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    point_count = point_counts.pop()
-    if point_count != len(rows):
-        fail(f"Spline '{spline_key}' declares PointCount={point_count}, but has {len(rows)} rows")
-    if point_count < 2:
-        fail(f"Spline '{spline_key}' needs at least 2 points")
+function heightmapBounds() {
+  if (areaSelectionBounds?.isValid?.()) return areaSelectionBounds;
+  return map.getBounds();
+}
 
-    sorted_rows = sorted(rows, key=lambda row: row["PointIndex"])
-    actual_indices = [row["PointIndex"] for row in sorted_rows]
-    expected_indices = list(range(point_count))
-    if actual_indices != expected_indices:
-        fail(f"Spline '{spline_key}' has invalid PointIndex sequence: {actual_indices}")
-    return sorted_rows
+function buildHeightmapSamples(bounds, grid) {
+  const samples = [];
+  const south = bounds.getSouth();
+  const west = bounds.getWest();
+  const north = bounds.getNorth();
+  const east = bounds.getEast();
+  for (let y = 0; y < grid.height; y += 1) {
+    const lat = grid.height === 1 ? north : north - ((north - south) * y) / (grid.height - 1);
+    for (let x = 0; x < grid.width; x += 1) {
+      const lon = grid.width === 1 ? west : west + ((east - west) * x) / (grid.width - 1);
+      samples.push({ lat, lon });
+    }
+  }
+  return samples;
+}
 
+async function fetchElevationBatch(samples, attempt = 0) {
+  const url = new URL(ELEVATION_API_URL);
+  url.searchParams.set("latitude", samples.map((sample) => sample.lat.toFixed(6)).join(","));
+  url.searchParams.set("longitude", samples.map((sample) => sample.lon.toFixed(6)).join(","));
+  const response = await fetch(url);
+  if (response.status === 429 && attempt < 4) {
+    await sleepMs(5000 * (attempt + 1));
+    return fetchElevationBatch(samples, attempt + 1);
+  }
+  if (!response.ok) throw new Error(`Open-Meteo Elevation HTTP ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data.elevation)) throw new Error("Open-Meteo liefert keine Höhendaten.");
+  return data.elevation.map((value) => Number(value));
+}
 
-def sanitize_label_part(value):
-    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")
-    return sanitized or "Unnamed"
+async function fetchHeightmapElevations(samples, onProgress) {
+  const elevations = new Array(samples.length);
+  const batchSize = 100;
+  for (let offset = 0; offset < samples.length; offset += batchSize) {
+    const batch = samples.slice(offset, offset + batchSize);
+    const values = await fetchElevationBatch(batch);
+    for (let index = 0; index < batch.length; index += 1) {
+      const elevation = values[index];
+      elevations[offset + index] = Number.isFinite(elevation) ? elevation : 0;
+    }
+    onProgress?.(Math.min(1, (offset + batch.length) / samples.length));
+    if (offset + batch.length < samples.length) await sleepMs(1000);
+  }
+  return elevations;
+}
 
+function upscaleHeightmap(sourceElevations, sourceGrid, targetGrid) {
+  if (sourceGrid.width === targetGrid.width && sourceGrid.height === targetGrid.height) return sourceElevations;
+  const target = new Array(targetGrid.width * targetGrid.height);
+  const sourceMaxX = sourceGrid.width - 1;
+  const sourceMaxY = sourceGrid.height - 1;
+  const targetMaxX = targetGrid.width - 1;
+  const targetMaxY = targetGrid.height - 1;
+  for (let y = 0; y < targetGrid.height; y += 1) {
+    const sourceY = targetMaxY === 0 ? 0 : (y / targetMaxY) * sourceMaxY;
+    const y0 = Math.floor(sourceY);
+    const y1 = Math.min(sourceMaxY, y0 + 1);
+    const ty = sourceY - y0;
+    for (let x = 0; x < targetGrid.width; x += 1) {
+      const sourceX = targetMaxX === 0 ? 0 : (x / targetMaxX) * sourceMaxX;
+      const x0 = Math.floor(sourceX);
+      const x1 = Math.min(sourceMaxX, x0 + 1);
+      const tx = sourceX - x0;
+      const v00 = sourceElevations[y0 * sourceGrid.width + x0];
+      const v10 = sourceElevations[y0 * sourceGrid.width + x1];
+      const v01 = sourceElevations[y1 * sourceGrid.width + x0];
+      const v11 = sourceElevations[y1 * sourceGrid.width + x1];
+      const top = v00 * (1 - tx) + v10 * tx;
+      const bottom = v01 * (1 - tx) + v11 * tx;
+      target[y * targetGrid.width + x] = top * (1 - ty) + bottom * ty;
+    }
+  }
+  return target;
+}
 
-def point_to_vector(row):
-    return unreal.Vector(
-        row["X"] + WORLD_OFFSET_CM.x,
-        row["Y"] + WORLD_OFFSET_CM.y,
-        (0.0 if FORCE_ZERO_Z else row["Z"]) + WORLD_OFFSET_CM.z,
-    )
+function encodeHeightmapR16(elevations, minElevationM, maxElevationM) {
+  const range = Math.max(0.01, maxElevationM - minElevationM);
+  const buffer = new ArrayBuffer(elevations.length * 2);
+  const view = new DataView(buffer);
+  elevations.forEach((elevation, index) => {
+    const normalized = Math.round(((elevation - minElevationM) / range) * 65535);
+    view.setUint16(index * 2, Math.max(0, Math.min(65535, normalized)), true);
+  });
+  return buffer;
+}
 
+function elevationRange(elevations) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const elevation of elevations) {
+    if (!Number.isFinite(elevation)) continue;
+    if (elevation < min) min = elevation;
+    if (elevation > max) max = elevation;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
+  return { min, max };
+}
 
-def spawn_empty_actor(label):
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
-        unreal.Actor,
-        unreal.Vector(0.0, 0.0, 0.0),
-        unreal.Rotator(0.0, 0.0, 0.0),
-    )
-    if actor is None:
-        fail(f"Failed to spawn actor '{label}'")
-    actor.set_actor_label(label)
-    return actor
+function heightmapPreviewBlob(elevations, grid, minElevationM, maxElevationM) {
+  const range = Math.max(0.01, maxElevationM - minElevationM);
+  const canvas = document.createElement("canvas");
+  canvas.width = grid.width;
+  canvas.height = grid.height;
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(grid.width, grid.height);
+  const exaggeration = range < 25 ? 3 : range < 75 ? 2 : 1.35;
+  const light = { x: -0.55, y: -0.75, z: 0.85 };
+  const lightLen = Math.hypot(light.x, light.y, light.z);
+  light.x /= lightLen;
+  light.y /= lightLen;
+  light.z /= lightLen;
+  for (let y = 0; y < grid.height; y += 1) {
+    for (let x = 0; x < grid.width; x += 1) {
+      const index = y * grid.width + x;
+      const left = elevations[y * grid.width + Math.max(0, x - 1)];
+      const right = elevations[y * grid.width + Math.min(grid.width - 1, x + 1)];
+      const up = elevations[Math.max(0, y - 1) * grid.width + x];
+      const down = elevations[Math.min(grid.height - 1, y + 1) * grid.width + x];
+      const dx = (right - left) * exaggeration;
+      const dy = (down - up) * exaggeration;
+      let nx = -dx;
+      let ny = -dy;
+      let nz = 2;
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+      const shade = Math.max(0, nx * light.x + ny * light.y + nz * light.z);
+      const normalized = (elevations[index] - minElevationM) / range;
+      const contrast = Math.max(0, Math.min(1, (normalized - 0.5) * 1.8 + 0.5));
+      const value = Math.max(0, Math.min(255, Math.round((contrast * 180 + shade * 95) / 1.08)));
+      const offset = index * 4;
+      image.data[offset] = value;
+      image.data[offset + 1] = value;
+      image.data[offset + 2] = value;
+      image.data[offset + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Preview-PNG konnte nicht erzeugt werden."));
+    }, "image/png");
+  });
+}
 
+function canvasBlob(canvas, type = "image/png") {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Canvas konnte nicht exportiert werden."));
+    }, type);
+  });
+}
 
-def add_spline_component(actor):
-    if not hasattr(actor, "add_component_by_class"):
-        fail("Actor.add_component_by_class is not exposed. Use the file import script with a BP actor fallback.")
+function heightmapPixelProjector(bounds, grid) {
+  const south = bounds.getSouth();
+  const west = bounds.getWest();
+  const north = bounds.getNorth();
+  const east = bounds.getEast();
+  const latRange = Math.max(1e-12, north - south);
+  const lonRange = Math.max(1e-12, east - west);
+  return ([lat, lon]) => ({
+    x: ((lon - west) / lonRange) * (grid.width - 1),
+    y: ((north - lat) / latRange) * (grid.height - 1),
+  });
+}
 
-    component = actor.add_component_by_class(
-        unreal.SplineComponent,
-        False,
-        unreal.Transform(),
-        False,
-    )
-    if component is None:
-        fail(f"Failed to add SplineComponent to actor '{actor.get_actor_label()}'")
-    component.set_editor_property("component_tags", [unreal.Name("CityStreetSpline")])
-    component.rename(SPLINE_COMPONENT_NAME)
-    return component
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
 
+function guideStyleForFeature(feature) {
+  const category = feature.category;
+  if (category === "building" || category === "building_3d") {
+    return { stroke: "#020617", fill: "#111827", width: 2, casing: null };
+  }
+  if (category === "water_area") {
+    return { stroke: "#075985", fill: "#38bdf8", width: 2, casing: null };
+  }
+  if (category === "waterway") {
+    return { stroke: "#0284c7", fill: null, width: 6, casing: "#e0f2fe" };
+  }
+  if (["forest", "farmland", "vineyard", "orchard"].includes(category)) {
+    return { stroke: "#166534", fill: "#86efac", width: 2, casing: null };
+  }
+  if (category === "hedge") {
+    return { stroke: "#14532d", fill: null, width: 4, casing: "#dcfce7" };
+  }
+  if (["motorway", "major_road", "city_road", "service", "cycleway", "footway", "parking"].includes(category)) {
+    const roadWidth = category === "footway" || category === "cycleway"
+      ? 3
+      : clampNumber(areaFeatureWidthM(feature), 3, 26);
+    return { stroke: "#f8fafc", fill: null, width: roadWidth, casing: "#0f172a", casingWidth: roadWidth + 3 };
+  }
+  if (["rail_tram", "rail_train", "rail_subway", "bus"].includes(category)) {
+    return { stroke: AREA_STYLE[category]?.color || "#7c3aed", fill: null, width: 4, casing: "#ffffff", casingWidth: 7 };
+  }
+  if (AREA_SPLINE_CATEGORIES.has(category)) {
+    return { stroke: AREA_STYLE[category]?.color || "#475569", fill: null, width: 4, casing: "#ffffff", casingWidth: 7 };
+  }
+  return { stroke: AREA_STYLE[category]?.color || "#ef4444", fill: null, width: 5, casing: "#ffffff", casingWidth: 8 };
+}
 
-def set_editor_property_if_present(obj, property_name, value):
-    try:
-        obj.set_editor_property(property_name, value)
-        return True
-    except Exception:
-        return False
+function drawGuidePath(ctx, points, closed, style) {
+  if (!points.length) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
+  if (closed) ctx.closePath();
+  if (style.fill && closed) {
+    ctx.fillStyle = style.fill;
+    ctx.fill();
+  }
+  if (style.casing) {
+    ctx.strokeStyle = style.casing;
+    ctx.lineWidth = style.casingWidth || style.width + 3;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+  ctx.strokeStyle = style.stroke;
+  ctx.lineWidth = style.width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+}
 
+async function landscapeReferenceBlob(bounds, grid) {
+  const canvas = document.createElement("canvas");
+  canvas.width = grid.width;
+  canvas.height = grid.height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#e5e7eb";
+  ctx.fillRect(0, 0, grid.width, grid.height);
+  const project = heightmapPixelProjector(bounds, grid);
+  const visible = areaFeatures.filter((feature) => areaLayerVisibility.get(feature.category));
+  const polygons = visible.filter((feature) => feature.closed || ["building", "building_3d", "water_area", "forest", "farmland", "vineyard", "orchard"].includes(feature.category));
+  const lines = visible.filter((feature) => !polygons.includes(feature) && feature.shape !== "point");
+  const points = visible.filter((feature) => feature.shape === "point");
 
-def configure_spline_component(spline_component, rows):
-    set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
-    spline_component.clear_spline_points(False)
+  for (const feature of polygons) {
+    const style = guideStyleForFeature(feature);
+    drawGuidePath(ctx, (feature.controlGeometry || []).map(project), true, style);
+  }
+  for (const feature of lines) {
+    const style = guideStyleForFeature(feature);
+    drawGuidePath(ctx, (feature.controlGeometry || []).map(project), false, style);
+  }
+  for (const feature of points) {
+    const p = project(feature.controlGeometry[0]);
+    const style = guideStyleForFeature(feature);
+    const radius = Math.max(3, Math.min(8, grid.width / 384));
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius + 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = style.stroke;
+    ctx.fill();
+  }
 
-    for row in rows:
-        spline_component.add_spline_point(point_to_vector(row), unreal.SplineCoordinateSpace.LOCAL, False)
+  ctx.fillStyle = "rgba(15, 23, 42, 0.78)";
+  ctx.font = "12px Arial, sans-serif";
+  ctx.fillText(`${grid.width}x${grid.height} · 1 m/px · reference only`, 10, Math.max(18, grid.height - 10));
+  return canvasBlob(canvas, "image/png");
+}
 
-    for index in range(len(rows)):
-        point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
-        spline_component.set_spline_point_type(index, point_type, False)
+function heightmapMetadata(bounds, targetGrid, minElevationM, maxElevationM) {
+  const rangeM = maxElevationM - minElevationM;
+  return {
+    source: "Open-Meteo Elevation API",
+    resolution: {
+      width: targetGrid.width,
+      height: targetGrid.height,
+      meters_per_pixel: targetGrid.metersPerPixel,
+      width_m: +targetGrid.widthM.toFixed(3),
+      height_m: +targetGrid.heightM.toFixed(3),
+    },
+    bounds_wgs84: {
+      south: bounds.getSouth(),
+      west: bounds.getWest(),
+      north: bounds.getNorth(),
+      east: bounds.getEast(),
+    },
+    elevation_m: {
+      min: +minElevationM.toFixed(3),
+      max: +maxElevationM.toFixed(3),
+      range: +rangeM.toFixed(3),
+    },
+    raw_r16: {
+      filename: "heightmap.r16",
+      encoding: "uint16_little_endian",
+      width: targetGrid.width,
+      height: targetGrid.height,
+      row_order: "north_to_south",
+      column_order: "west_to_east",
+      value_0_elevation_m: +minElevationM.toFixed(3),
+      value_65535_elevation_m: +maxElevationM.toFixed(3),
+    },
+    raw_with_sidecar: {
+      filename: "unreal-heightmap.raw",
+      sidecar: "unreal-heightmap.json",
+      encoding: "uint16_little_endian",
+      width: targetGrid.width,
+      height: targetGrid.height,
+      bpp: 16,
+      bbp: 16,
+      recommended_for_unreal: true,
+    },
+    unreal_landscape: {
+      suggested_z_scale_percent: +((rangeM * 100) / 512).toFixed(3),
+      note: "For arbitrary/non-square sizes, import unreal-heightmap.raw with unreal-heightmap.json in the same folder. Sidecar includes bpp and Epic's documented bbp spelling for compatibility.",
+    },
+  };
+}
 
-    if hasattr(spline_component, "set_closed_loop"):
-        spline_component.set_closed_loop(bool(rows[0]["bClosed"]), False)
-    elif bool(rows[0]["bClosed"]):
-        fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
+async function exportHeightmap() {
+  const bounds = heightmapBounds();
+  if (!bounds?.isValid?.()) {
+    setStatus("Erst einen Bereich auf der Karte ziehen oder zur Zielregion zoomen.", true);
+    return;
+  }
+  const areaKm2 = areaBoundsSizeKm2(bounds);
+  if (areaKm2 > AREA_MAX_REQUEST_KM2) {
+    setStatus(`Heightmap-Bereich zu groß (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
+    return;
+  }
 
-    spline_component.update_spline()
+  const targetGrid = heightmapTargetGrid(bounds);
+  const targetPixels = targetGrid.width * targetGrid.height;
+  if (targetPixels > HEIGHTMAP_MAX_TARGET_PIXELS) {
+    setStatus(
+      `Heightmap wäre ${targetGrid.width}x${targetGrid.height} Pixel (${targetPixels.toLocaleString("de-DE")}). Limit sind 16 Megapixel.`,
+      true,
+    );
+    return;
+  }
 
+  const sourceGrid = heightmapSourceGrid(targetGrid);
+  const samples = buildHeightmapSamples(bounds, sourceGrid);
+  try {
+    setStatus(`Heightmap ${targetGrid.width}x${targetGrid.height} (1 m/px): ${sourceGrid.width}x${sourceGrid.height} Höhenraster laden ...`);
+    const sourceElevations = await fetchHeightmapElevations(samples, (progress) => {
+      setStatus(`Heightmap ${targetGrid.width}x${targetGrid.height}: ${Math.round(progress * 100)}% Höhendaten geladen ...`);
+    });
+    const elevations = upscaleHeightmap(sourceElevations, sourceGrid, targetGrid);
+    const { min: minElevationM, max: maxElevationM } = elevationRange(elevations);
+    const r16 = encodeHeightmapR16(elevations, minElevationM, maxElevationM);
+    const preview = await heightmapPreviewBlob(elevations, targetGrid, minElevationM, maxElevationM);
+    const reference = await landscapeReferenceBlob(bounds, targetGrid);
+    const metadata = {
+      ...heightmapMetadata(bounds, targetGrid, minElevationM, maxElevationM),
+      source_sampling: {
+        width: sourceGrid.width,
+        height: sourceGrid.height,
+        samples: samples.length,
+        upscaled_to: {
+          width: targetGrid.width,
+          height: targetGrid.height,
+        },
+      },
+    };
 
-def set_actor_tags(actor, rows):
-    first = rows[0]
-    tags = ["CityStreet", first["SplineKey"], first["Type"], first["Shape"], first["OsmClass"]]
-    if first["Street"]:
-        tags.append(first["Street"])
-    if first["bBridge"]:
-        tags.append("Bridge")
-    if first["bTunnel"]:
-        tags.append("Tunnel")
-    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
-
-
-def create_street_spline_actor(spline_key, rows):
-    sorted_rows = validate_group(spline_key, rows)
-    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(spline_key)}"
-    actor = spawn_empty_actor(label)
-    spline_component = add_spline_component(actor)
-    configure_spline_component(spline_component, sorted_rows)
-    set_actor_tags(actor, sorted_rows)
-    return actor
-
-
-def main():
-    groups = group_rows(STREET_ROWS)
-    destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
-    created = 0
-    for spline_key, rows in groups.items():
-        create_street_spline_actor(spline_key, rows)
-        created += 1
-    log("INFO", f"Imported {created} city street splines from {len(STREET_ROWS)} point rows")
-
-
-main()
-`;
+    const zip = new JSZip();
+    zip.file("heightmap.r16", r16);
+    zip.file("unreal-heightmap.raw", r16);
+    zip.file("unreal-heightmap.json", JSON.stringify({ width: targetGrid.width, height: targetGrid.height, bpp: 16, bbp: 16 }, null, 2));
+    zip.file("heightmap-preview.png", preview);
+    zip.file("landscape-reference.png", reference);
+    zip.file("heightmap-meta.json", JSON.stringify(metadata, null, 2));
+    const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `heightmap-${targetGrid.width}x${targetGrid.height}-1m.zip`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`Heightmap exportiert: ${targetGrid.width}x${targetGrid.height} bei 1 m/px, ${minElevationM.toFixed(1)}-${maxElevationM.toFixed(1)} m.`);
+  } catch (error) {
+    setStatus(`Heightmap-Export fehlgeschlagen: ${error.message}`, true);
+  }
 }
 
 function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
   const splines = Array.isArray(payload) ? payload : (payload?.splines || []);
   const buildings = Array.isArray(payload) ? [] : (payload?.buildings || []);
   const trees = Array.isArray(payload) ? [] : (payload?.trees || []);
+  const props = Array.isArray(payload) ? [] : (payload?.props || []);
   const jsonLiteral = JSON.stringify(JSON.stringify(splines));
   const buildingJsonLiteral = JSON.stringify(JSON.stringify(buildings));
   const treeJsonLiteral = JSON.stringify(JSON.stringify(trees));
+  const propJsonLiteral = JSON.stringify(JSON.stringify(props));
   const bpPathsLiteral = JSON.stringify(JSON.stringify({
     ...DEFAULT_AREA_BP_PATHS,
     ...(bpPaths || {}),
@@ -2978,10 +3665,12 @@ import unreal
 STREET_SPLINES = json.loads(${jsonLiteral})
 BUILDINGS = json.loads(${buildingJsonLiteral})
 TREES = json.loads(${treeJsonLiteral})
+PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
+PROP_ACTOR_LABEL_PREFIX = "OSM_PROP"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
@@ -3101,12 +3790,13 @@ def configure_spline_component(spline_component, row):
 
 def set_actor_tags(actor, row):
     tags = [
+        "OSM_SPLINE",
         "CityStreet",
-        f"Strasse Name:{row.get('Street', '') or row.get('SplineKey', '')}",
-        f"Typ:{row.get('Type', '')}",
-        f"Breite:{float(row.get('WidthM', 0.0)):.2f}",
-        f"SplineKey:{row.get('SplineKey', '')}",
-        f"OsmClass:{row.get('OsmClass', '')}",
+        row.get("Street", "") or row.get("SplineKey", ""),
+        row.get("Type", ""),
+        f"{float(row.get('WidthM', 0.0)):.2f}",
+        row.get("SplineKey", ""),
+        row.get("OsmClass", ""),
     ]
     if row.get("bBridge"):
         tags.append("Bridge")
@@ -3150,13 +3840,16 @@ def create_building_actor(actor_class, row):
             max(0.01, float(row["HeightCm"]) / CUBE_BASE_CM),
         )
     )
-    actor.tags = [
-        unreal.Name("building"),
-        unreal.Name(str(row.get("BuildingKey", ""))),
-        unreal.Name(str(row.get("OsmId", ""))),
-        unreal.Name(str(row.get("Name", ""))),
-        unreal.Name(str(row.get("Type", ""))),
+    tags = [
+        "OSM_BUILDING",
+        "building",
+        row.get("BuildingKey", ""),
+        row.get("OsmId", ""),
+        row.get("Name", ""),
+        row.get("Type", ""),
+        row.get("Address", ""),
     ]
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
     return actor
 
 
@@ -3174,16 +3867,46 @@ def create_tree_actor(actor_class, row):
     crown_scale = max(0.01, float(row.get("CrownDiameterCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     height_scale = max(0.01, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
     actor.set_actor_scale3d(unreal.Vector(crown_scale, crown_scale, height_scale))
-    actor.tags = [
-        unreal.Name("tree"),
-        unreal.Name(str(row.get("TreeKey", ""))),
-        unreal.Name(str(row.get("OsmId", ""))),
-        unreal.Name(str(row.get("Type", ""))),
-        unreal.Name(f"HeightCm:{row.get('HeightCm', '')}"),
-        unreal.Name(f"CrownDiameterCm:{row.get('CrownDiameterCm', '')}"),
-        unreal.Name(f"Species:{row.get('Species', '')}"),
-        unreal.Name(f"LeafType:{row.get('LeafType', '')}"),
+    tags = [
+        "OSM_TREE",
+        "tree",
+        row.get("TreeKey", ""),
+        row.get("OsmId", ""),
+        row.get("Type", ""),
+        row.get("HeightCm", ""),
+        row.get("CrownDiameterCm", ""),
+        row.get("Species", ""),
+        row.get("LeafType", ""),
     ]
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
+    return actor
+
+
+def create_prop_actor(actor_class, row):
+    label = f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('PropKey', row.get('Name', 'Prop')))}"
+    location = unreal.Vector(
+        float(row["X"]) + WORLD_OFFSET_CM.x,
+        float(row["Y"]) + WORLD_OFFSET_CM.y,
+        float(row.get("Z", 0.0)) + WORLD_OFFSET_CM.z,
+    )
+    yaw = float(row.get("Direction") or 0.0)
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, unreal.Rotator(0.0, 0.0, yaw))
+    if actor is None:
+        fail(f"Failed to spawn actor '{label}'")
+    actor.set_actor_label(label)
+    height_scale = max(0.1, float(row.get("HeightCm", CUBE_BASE_CM)) / CUBE_BASE_CM)
+    actor.set_actor_scale3d(unreal.Vector(0.25, 0.25, height_scale))
+    tags = [
+        "OSM_PROP",
+        "prop",
+        row.get("Category", ""),
+        row.get("PropKey", ""),
+        row.get("OsmId", ""),
+        row.get("Type", ""),
+        row.get("Ref", ""),
+        row.get("Address", ""),
+    ]
+    actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
     return actor
 
 
@@ -3192,6 +3915,7 @@ def main():
     destroy_existing_actor_with_prefix(f"{ACTOR_LABEL_PREFIX}_")
     destroy_existing_actor_with_prefix(f"{BUILDING_ACTOR_LABEL_PREFIX}_")
     destroy_existing_actor_with_prefix(f"{TREE_ACTOR_LABEL_PREFIX}_")
+    destroy_existing_actor_with_prefix(f"{PROP_ACTOR_LABEL_PREFIX}_")
     point_count = 0
     for index, source_row in enumerate(STREET_SPLINES):
         row = require_spline(source_row, index)
@@ -3204,7 +3928,10 @@ def main():
     tree_actor_class = load_bp_class(BP_PATHS["tree"]) if TREES else None
     for row in TREES:
         create_tree_actor(tree_actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points, {len(BUILDINGS)} buildings and {len(TREES)} trees")
+    prop_actor_class = load_bp_class(BP_PATHS["prop"]) if PROPS else None
+    for row in PROPS:
+        create_prop_actor(prop_actor_class, row)
+    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
 
 
 main()
@@ -3274,20 +4001,22 @@ import unreal
 BP_PATHS = json.loads(${pathsLiteral})
 
 SPLINE_KINDS = {"tunnel", "subway", "tram", "train", "bus", "street"}
-MESH_KINDS = {"building", "tree"}
+MESH_KINDS = {"building", "tree", "prop"}
 KIND_LABELS = {
     "tunnel": "Tunnel",
     "subway": "U-Bahn/Gleis",
     "tram": "Tram",
     "train": "S-Bahn/Zug",
     "bus": "Bus",
-    "street": "Strasse",
-    "building": "Gebaeude",
+    "street": "Straße",
+    "building": "Gebäude",
     "tree": "Baum",
+    "prop": "OSM Prop",
 }
 MESH_BY_KIND = {
     "building": "/Engine/BasicShapes/Cube.Cube",
     "tree": "/Engine/BasicShapes/Sphere.Sphere",
+    "prop": "/Engine/BasicShapes/Cube.Cube",
 }
 
 
@@ -3609,14 +4338,16 @@ function buildAreaRouteSegments(uePayload, bounds = areaSelectionBounds) {
     }
   }
 
-  return intervals
-    .filter((interval) => interval.toM - interval.fromM > 1)
-    .map((interval, index, all) => ({
-      fromM: interval.fromM,
-      toM: interval.toM,
-      bounds,
-      suffix: all.length > 1 ? `_area_${String(index + 1).padStart(2, "0")}` : "_area",
-    }));
+  const validIntervals = intervals.filter((interval) => interval.toM - interval.fromM > 1);
+  if (!validIntervals.length) return [];
+
+  return [{
+    fromM: Math.min(...validIntervals.map((interval) => interval.fromM)),
+    toM: Math.max(...validIntervals.map((interval) => interval.toM)),
+    intervals: validIntervals,
+    bounds,
+    suffix: "_area",
+  }];
 }
 
 function stationInBounds(station, bounds) {
@@ -3640,15 +4371,18 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
       Number(allStations[allStations.length - 1].platform_end_m ?? allStations[allStations.length - 1].dist_m),
   );
   if (!Number.isFinite(segmentStartM) || !Number.isFinite(segmentEndM) || segmentEndM <= segmentStartM) {
-    throw new Error(`${uePayload.ref} hat keinen gueltigen Bereich im markierten Rechteck.`);
+    throw new Error(`${uePayload.ref} hat keinen gültigen Bereich im markierten Rechteck.`);
   }
 
   const selectedStations = allStations.filter((station) => {
     const start = Number(station.platform_start_m ?? station.dist_m);
     const end = Number(station.platform_end_m ?? station.dist_m);
     const stationDist = Number(station.dist_m);
-    const overlapsSegment = end >= segmentStartM && start <= segmentEndM;
-    const distanceInSegment = stationDist >= segmentStartM && stationDist <= segmentEndM;
+    const intervals = Array.isArray(segmentRange?.intervals) && segmentRange.intervals.length
+      ? segmentRange.intervals
+      : [{ fromM: segmentStartM, toM: segmentEndM }];
+    const overlapsSegment = intervals.some((interval) => end >= interval.fromM && start <= interval.toM);
+    const distanceInSegment = intervals.some((interval) => stationDist >= interval.fromM && stationDist <= interval.toM);
     const stopInSelection = segmentRange?.bounds && stationInBounds(station, segmentRange.bounds);
     return overlapsSegment || distanceInSegment || stopInSelection;
   });
@@ -3668,43 +4402,52 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
 
   const sections = [];
   let tunnelIndex = 1;
+  const activeIntervals = Array.isArray(segmentRange?.intervals) && segmentRange.intervals.length
+    ? segmentRange.intervals
+    : [{ fromM: segmentStartM, toM: segmentEndM }];
   for (const section of uePayload.sections || []) {
-    const fromM = Math.max(Number(section.from_m), segmentStartM);
-    const toM = Math.min(Number(section.to_m), segmentEndM);
-    if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) continue;
+    const rawFromM = Number(section.from_m);
+    const rawToM = Number(section.to_m);
+    if (!Number.isFinite(rawFromM) || !Number.isFinite(rawToM)) continue;
 
-    if (section.type === "platform") {
-      const sectionStation = stationByName.get(section.station);
-      const stationKey = stationExportKey(section.station);
+    for (const interval of activeIntervals) {
+      const fromM = Math.max(rawFromM, Number(interval.fromM));
+      const toM = Math.min(rawToM, Number(interval.toM));
+      if (!Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM) continue;
+
+      if (section.type === "platform") {
+        const sectionStation = stationByName.get(section.station);
+        const stationKey = stationExportKey(section.station);
+        sections.push({
+          Name: `platform_${stationKey}`,
+          UB_SectionType: "platform",
+          UB_StationKey: stationKey,
+          UB_FromM: datatableNumber(fromM - segmentStartM),
+          UB_ToM: datatableNumber(toM - segmentStartM),
+          UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
+          UB_Level: sectionStation?.level ?? null,
+          UB_HeightM: datatableNumber(section.center_height_m ?? sectionStation?.height_m ?? 0),
+          UB_FromHeightM: datatableNumber(section.from_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
+          UB_ToHeightM: datatableNumber(section.to_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
+          UB_HeightSource: sectionStation?.height_source || "",
+        });
+        continue;
+      }
+
       sections.push({
-        Name: `platform_${stationKey}`,
-        UB_SectionType: "platform",
-        UB_StationKey: stationKey,
+        Name: `tunnel_${String(tunnelIndex++).padStart(3, "0")}`,
+        UB_SectionType: "tunnel",
+        UB_StationKey: "",
         UB_FromM: datatableNumber(fromM - segmentStartM),
         UB_ToM: datatableNumber(toM - segmentStartM),
-        UB_CenterM: datatableNumber(Number(section.center_m || 0) - segmentStartM),
-        UB_Level: sectionStation?.level ?? null,
-        UB_HeightM: datatableNumber(section.center_height_m ?? sectionStation?.height_m ?? 0),
-        UB_FromHeightM: datatableNumber(section.from_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
-        UB_ToHeightM: datatableNumber(section.to_height_m ?? section.center_height_m ?? sectionStation?.height_m ?? 0),
-        UB_HeightSource: sectionStation?.height_source || "",
+        UB_CenterM: 0,
+        UB_Level: null,
+        UB_HeightM: datatableNumber(section.center_height_m || 0),
+        UB_FromHeightM: datatableNumber(section.from_height_m || 0),
+        UB_ToHeightM: datatableNumber(section.to_height_m || 0),
+        UB_HeightSource: "",
       });
-      continue;
     }
-
-    sections.push({
-      Name: `tunnel_${String(tunnelIndex++).padStart(3, "0")}`,
-      UB_SectionType: "tunnel",
-      UB_StationKey: "",
-      UB_FromM: datatableNumber(fromM - segmentStartM),
-      UB_ToM: datatableNumber(toM - segmentStartM),
-      UB_CenterM: 0,
-      UB_Level: null,
-      UB_HeightM: datatableNumber(section.center_height_m || 0),
-      UB_FromHeightM: datatableNumber(section.from_height_m || 0),
-      UB_ToHeightM: datatableNumber(section.to_height_m || 0),
-      UB_HeightSource: "",
-    });
   }
 
   const suffix = segmentRange?.suffix || "";
@@ -3721,7 +4464,7 @@ async function ensureLineLoadedForDatatableExport(line) {
   }
   const imported = await importFromOverpass(ref, route);
   if (!imported || lastLoadData?.ref !== ref || lastLoadData?.routeMode !== route || !masterStations?.length) {
-    throw new Error(`${transitLineLabel(line)} konnte nicht fuer den Datatable-Export geladen werden.`);
+    throw new Error(`${transitLineLabel(line)} konnte nicht für den Datatable-Export geladen werden.`);
   }
 }
 
@@ -3741,14 +4484,14 @@ async function exportDatatableZip() {
   const zip = new JSZip();
 
   try {
-    setStatus(`Erzeuge Datatable-ZIP fuer Bereichslinien ${checked.map(transitLineLabel).join(", ")} ...`);
+    setStatus(`Erzeuge Datatable-ZIP für Bereichslinien ${checked.map(transitLineLabel).join(", ")} ...`);
     for (const line of checked) {
       const { ref } = line;
       await ensureLineLoadedForDatatableExport(line);
       const uePayload = exportToUnreal(true);
       if (!uePayload) throw new Error(`${transitLineLabel(line)} hat keinen UE-Payload.`);
       const areaSegments = buildAreaRouteSegments(uePayload);
-      if (!areaSegments.length) throw new Error(`${transitLineLabel(line)} verlaeuft nicht durch den aktuell markierten Bereich.`);
+      if (!areaSegments.length) throw new Error(`${transitLineLabel(line)} verläuft nicht durch den aktuell markierten Bereich.`);
       for (const areaSegment of areaSegments) {
         const { stations, sections, suffix } = buildDatatablePayloads(uePayload, areaSegment, line);
         const folderName = `${line.route}_${ref}${suffix}`;
@@ -3819,7 +4562,7 @@ function exportAreaUnrealPython() {
   try {
     const payload = buildAreaPythonExportPayload();
     if (!payload) {
-      setStatus("Keine sichtbaren Bereichsdaten fuer Unreal-Python-Export vorhanden.", true);
+      setStatus("Keine sichtbaren Bereichsdaten für Unreal-Python-Export vorhanden.", true);
       return;
     }
     const bpPaths = getAreaBpPathsForExport();
@@ -3827,7 +4570,7 @@ function exportAreaUnrealPython() {
     const code = buildCompactAreaUnrealPythonScript(payload, bpPaths);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
-    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebaeude / ${payload.trees.length} Baeume eingebettet`);
+    setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebäude / ${payload.trees.length} Bäume / ${payload.props.length} Props eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
   }
@@ -4007,7 +4750,7 @@ function loadFromUploadedData(data, ref, routeMode = currentRouteMode || "subway
         setStatus(`Linie ${ref} aus Master-Cache geladen (JSON ohne Relation).`);
         return;
       }
-      setStatus(`Keine ${TRANSIT_ROUTE_MODES[currentRouteMode]?.label || currentRouteMode}-Relation fuer ${ref} in der JSON.`, true);
+      setStatus(`Keine ${TRANSIT_ROUTE_MODES[currentRouteMode]?.label || currentRouteMode}-Relation für ${ref} in der JSON.`, true);
       clearRoute();
       return;
     }
@@ -4208,14 +4951,14 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     }
     const areaKm2 = areaBoundsSizeKm2(bounds);
     if (areaKm2 > AREA_MAX_REQUEST_KM2) {
-      setStatus(`Bereich zu gross (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
+      setStatus(`Bereich zu groß (${areaKm2.toFixed(1)} km²). Bitte kleiner als ${AREA_MAX_REQUEST_KM2} km² ziehen.`, true);
       return false;
     }
     const expensiveLayers = selectedCategories.filter((category) => AREA_EXPENSIVE_LAYERS.has(category));
     if (areaKm2 > AREA_LARGE_REQUEST_KM2 && expensiveLayers.length) {
       const expensiveLabels = expensiveLayers.map((category) => AREA_LAYER_LABELS[category]).join(", ");
       setStatus(
-        `Bereich ${areaKm2.toFixed(1)} km² ist fuer ${expensiveLabels} zu gross. Diese Layer abwaehlen oder kleiner als ${AREA_LARGE_REQUEST_KM2} km² ziehen.`,
+        `Bereich ${areaKm2.toFixed(1)} km² ist für ${expensiveLabels} zu groß. Diese Layer abwählen oder kleiner als ${AREA_LARGE_REQUEST_KM2} km² ziehen.`,
         true,
       );
       return false;
@@ -4270,12 +5013,11 @@ async function importLineAndAreaFromOverpass(ref) {
 }
 
 async function importCurrentOverpassSelection(ref) {
+  const bounds = areaSelectionBounds?.isValid?.() ? areaSelectionBounds : map.getBounds();
+  await importAreaFromOverpass(bounds);
   if (areaSelectionBounds?.isValid?.()) {
-    await importAreaFromOverpass(areaSelectionBounds);
     map.fitBounds(areaSelectionBounds, { padding: [48, 48], maxZoom: 14 });
-    return;
   }
-  await importLineAndAreaFromOverpass(ref);
 }
 
 function boundsFromNominatimResult(result) {
@@ -4313,13 +5055,13 @@ async function findPostalCodeBounds(postalCode) {
 
   const results = await response.json();
   if (!Array.isArray(results) || !results.length) {
-    throw new Error(`Keine Ortsdaten fuer PLZ ${normalized} gefunden.`);
+    throw new Error(`Keine Ortsdaten für PLZ ${normalized} gefunden.`);
   }
 
   const result = results[0];
   const bounds = boundsFromNominatimResult(result);
   if (!bounds?.isValid?.()) {
-    throw new Error(`PLZ ${normalized} hat keine gueltige Bounding Box.`);
+    throw new Error(`PLZ ${normalized} hat keine gültige Bounding Box.`);
   }
   _storageSet(cacheKey, { v: 1, ts: Date.now(), result });
   return { bounds, label: result.display_name };
@@ -4333,7 +5075,7 @@ async function selectPostalCodeArea() {
     const { bounds, label } = await findPostalCodeBounds(postalCode);
     setAreaSelectionBounds(bounds);
     map.fitBounds(bounds, { padding: [48, 48], maxZoom: 14 });
-    setStatus(`PLZ-Bereich gewaehlt: ${label}`);
+    setStatus(`PLZ-Bereich gewählt: ${label}`);
   } catch (error) {
     setStatus(`PLZ-Suche fehlgeschlagen: ${error.message}`, true);
   }
@@ -4441,6 +5183,8 @@ document.getElementById("edit-reset")?.addEventListener("click", () => {
 document.getElementById("btn-export-master")?.addEventListener("click", exportMaster);
 document.getElementById("btn-export-datatables")?.addEventListener("click", exportDatatableZip);
 document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaPcgSplines);
+document.getElementById("btn-export-props")?.addEventListener("click", exportAreaPcgProps);
+document.getElementById("btn-export-heightmap")?.addEventListener("click", exportHeightmap);
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
 document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
 document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
@@ -4487,7 +5231,7 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
       return;
     }
     const selectedLabels = getSelectedAreaCategories().map((category) => AREA_LAYER_LABELS[category]).join(", ");
-    setStatus(selectedLabels ? `Auswahl fuer ersten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
+    setStatus(selectedLabels ? `Auswahl für ersten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
   });
 });
 
