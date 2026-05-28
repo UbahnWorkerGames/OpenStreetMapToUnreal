@@ -1685,7 +1685,7 @@ function polylineLengthM(poly) {
 }
 
 function areaGroupName(tags, category, id) {
-  return tags?.name || tags?.ref || `${AREA_LAYER_LABELS[category]} ${id}`;
+  return tags?.name || tags?.ref || propDisplayName(tags, category, `${AREA_LAYER_LABELS[category]} ${id}`);
 }
 
 function isRoundaboutTags(tags = {}) {
@@ -2761,6 +2761,8 @@ function areaFeatureExportClass(feature) {
     feature.tags.building ||
     feature.tags.natural ||
     feature.tags.traffic_sign ||
+    feature.tags["traffic_sign:forward"] ||
+    feature.tags["traffic_sign:backward"] ||
     feature.tags.amenity ||
     feature.tags.shop ||
     feature.tags.tourism ||
@@ -2772,6 +2774,8 @@ function areaFeatureExportClass(feature) {
     feature.tags.barrier ||
     feature.tags.emergency ||
     feature.tags.man_made ||
+    feature.tags.lamp_type ||
+    feature.tags.lit_by ||
     "";
 }
 
@@ -2818,8 +2822,49 @@ function treeType(tags = {}) {
   return tags.species || tags.genus || tags.taxon || tags.leaf_type || tags.leaf_cycle || tags.denotation || "tree";
 }
 
+function readableTrafficSign(tags = {}) {
+  if (tags.highway === "stop") return "Stopschild";
+  if (tags.highway === "give_way") return "Vorfahrt gewaehren";
+  const value = tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || "";
+  if (!value) return "Verkehrsschild";
+  const normalized = String(value).toLowerCase();
+  if (normalized.includes("stop") || normalized.includes("206")) return "Stopschild";
+  if (normalized.includes("give_way") || normalized.includes("205")) return "Vorfahrt gewaehren";
+  if (normalized.includes("city_limit")) return "Ortsschild";
+  if (normalized.includes("maxspeed") || normalized.includes("274")) return "Temposchild";
+  if (normalized.includes("no_entry") || normalized.includes("267")) return "Einfahrt verboten";
+  return `Verkehrsschild ${value}`;
+}
+
+function lampDetails(tags = {}) {
+  return [
+    tags.lamp_type,
+    tags.lit_by,
+    tags.light_source,
+    tags["light:method"],
+    tags["light:colour"],
+    tags.lamp_mount,
+    tags.support,
+  ].filter(Boolean).join(" ");
+}
+
+function propDisplayName(tags = {}, category = "prop", fallback = "") {
+  if (category === "traffic_signal" || tags.highway === "traffic_signals") return "Ampel";
+  if (category === "traffic_sign_node") return readableTrafficSign(tags);
+  if (category === "street_lamp") {
+    const details = lampDetails(tags);
+    return details ? `Laterne ${details}` : "Laterne";
+  }
+  return tags.name || tags.ref || fallback || AREA_LAYER_LABELS[category] || category;
+}
+
 function propType(tags = {}, category = "prop") {
+  if (category === "traffic_signal" || tags.highway === "traffic_signals") return "traffic_signals";
+  if (category === "traffic_sign_node") return tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || tags.highway || "traffic_sign";
+  if (category === "street_lamp") return lampDetails(tags) || tags.highway || tags.man_made || "street_lamp";
   return tags.traffic_sign ||
+    tags["traffic_sign:forward"] ||
+    tags["traffic_sign:backward"] ||
     tags.highway ||
     tags.man_made ||
     tags.amenity ||
@@ -3149,14 +3194,17 @@ function buildPropData(selected, transform, categories = AREA_PROP_CATEGORIES) {
       const location = transform.toPointCm(center);
       const heightCm = +(areaTagFloat(feature.tags.height) ? areaTagFloat(feature.tags.height) * 100 : 100).toFixed(1);
       const address = addressFromTags(feature.tags);
+      const displayName = propDisplayName(feature.tags, feature.category, feature.name || feature.key);
       return {
         ObjectType: "OSM_PROP",
         PropKey: feature.key,
         OsmId: feature.id,
         Category: feature.category,
-        Name: feature.name || feature.key,
+        Name: displayName,
+        DisplayName: displayName,
         Type: propType(feature.tags, feature.category),
         Ref: feature.tags.ref || "",
+        OriginalTags: feature.tags,
         Address: address.full,
         AddressStreet: address.street,
         AddressHouseNumber: address.houseNumber,
@@ -3793,7 +3841,7 @@ def set_editor_property_if_present(obj, property_name, value):
 def actor_data_tag(row, object_type):
     payload = dict(row)
     payload["ObjectType"] = object_type
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return "OSM_JSON:" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def set_tags(actor, tags):
@@ -3914,7 +3962,8 @@ def create_tree_actor(actor_class, row):
 
 
 def create_prop_actor(actor_class, row):
-    label = f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('PropKey', row.get('Name', 'Prop')))}"
+    label_name = row.get("DisplayName") or row.get("Name") or row.get("Type") or row.get("PropKey", "Prop")
+    label = f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(label_name)}_{sanitize_label_part(row.get('OsmId', ''))}"
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
         float(row["Y"]) + WORLD_OFFSET_CM.y,
@@ -3932,6 +3981,7 @@ def create_prop_actor(actor_class, row):
         "OSM_PROP",
         "prop",
         row.get("Category", ""),
+        row.get("DisplayName", ""),
         row.get("PropKey", ""),
         row.get("OsmId", ""),
         row.get("Type", ""),
