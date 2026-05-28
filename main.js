@@ -122,6 +122,7 @@ const AREA_STYLE = {
   building: { color: "#64748b", weight: 1.2 },
   building_3d: { color: "#f97316", weight: 1.5 },
   tree: { color: "#15803d", weight: 2 },
+  traffic_signal: { color: "#f97316", weight: 2 },
   traffic_sign_node: { color: "#ef4444", weight: 2 },
   amenity_food: { color: "#ec4899", weight: 2 },
   amenity_shop: { color: "#8b5cf6", weight: 2 },
@@ -205,6 +206,7 @@ const AREA_SPLINE_CATEGORIES = new Set([
 
 const AREA_PROP_CATEGORIES = new Set([
   "traffic_sign_node",
+  "traffic_signal",
   "amenity_food",
   "amenity_shop",
   "amenity_fuel",
@@ -272,6 +274,7 @@ const AREA_LAYER_LABELS = {
   building: "Gebäude",
   building_3d: "3D-Dach",
   tree: "Bäume",
+  traffic_signal: "Ampeln",
   traffic_sign_node: "Verkehrsschilder",
   amenity_food: "Restaurant/Cafe",
   amenity_shop: "Supermarkt",
@@ -352,6 +355,18 @@ function setSelectedAreaCategories(categories) {
   document.querySelectorAll("[data-area-layer]").forEach((input) => {
     input.checked = selected.has(input.dataset.areaLayer);
   });
+}
+
+function resetAreaLayersKeepBounds() {
+  setSelectedAreaCategories([]);
+  areaFeatures = [];
+  detectedAreaTransitLines = [];
+  datatableAreaLines = [];
+  areaCache = null;
+  areaRawLayer.clearLayers();
+  areaProcessedLayer.clearLayers();
+  updateDatatableAreaLineSelection();
+  setStatus("Layer zurückgesetzt. Bereich bleibt erhalten.");
 }
 
 function readSavedAreaSelections() {
@@ -1335,7 +1350,8 @@ function classifyAreaWay(tags = {}) {
 
 function classifyAreaNode(tags = {}) {
   if (tags.natural === "tree") return "tree";
-  if (tags.highway === "traffic_signals" || tags.traffic_sign || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
+  if (tags.highway === "traffic_signals") return "traffic_signal";
+  if (tags.traffic_sign || tags["traffic_sign:forward"] || tags["traffic_sign:backward"] || tags.highway === "stop" || tags.highway === "give_way") return "traffic_sign_node";
   if (["restaurant", "cafe", "fast_food", "bar", "pub", "food_court"].includes(tags.amenity)) return "amenity_food";
   if (tags.shop === "supermarket") return "amenity_shop";
   if (tags.shop) return "retail_shop";
@@ -1366,7 +1382,7 @@ function classifyAreaNode(tags = {}) {
   if (tags.amenity === "post_box") return "post_box";
   if (tags.amenity === "drinking_water" || tags.amenity === "water_point") return "drinking_water";
   if (tags.amenity === "vending_machine") return "vending_machine";
-  if (tags.highway === "street_lamp" || tags.man_made === "street_lamp") return "street_lamp";
+  if (tags.highway === "street_lamp" || tags.man_made === "street_lamp" || tags.lit_by === "street_lamp") return "street_lamp";
   if (tags.amenity === "bicycle_parking") return "bicycle_parking";
   if (["bollard", "cycle_barrier", "gate", "lift_gate", "block"].includes(tags.barrier)) return "barrier";
   if (tags.emergency === "fire_hydrant") return "fire_hydrant";
@@ -1405,8 +1421,10 @@ function areaOverpassFilterForCategory(category) {
       return ['way["roof:shape"]', 'way["building:part"]'];
     case "tree":
       return 'node["natural"="tree"]';
+    case "traffic_signal":
+      return 'node["highway"="traffic_signals"]';
     case "traffic_sign_node":
-      return ['node["highway"="traffic_signals"]', 'node["traffic_sign"]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
+      return ['node["traffic_sign"]', 'node["traffic_sign:forward"]', 'node["traffic_sign:backward"]', 'node["highway"="stop"]', 'node["highway"="give_way"]'];
     case "amenity_food":
       return 'node["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court)$"]';
     case "amenity_shop":
@@ -1454,7 +1472,7 @@ function areaOverpassFilterForCategory(category) {
     case "bbq":
       return 'node["amenity"="bbq"]';
     case "street_lamp":
-      return 'node[~"^(highway|man_made)$"~"^street_lamp$"]';
+      return ['node["highway"="street_lamp"]', 'node["man_made"="street_lamp"]', 'node["lit_by"="street_lamp"]'];
     case "bicycle_parking":
       return 'node["amenity"="bicycle_parking"]';
     case "ev_charging":
@@ -1946,12 +1964,12 @@ function renderAreaFeatures() {
     const style = AREA_STYLE[feature.category];
     if (feature.shape === "point") {
       L.circleMarker(feature.controlGeometry[0], {
-        radius: 4,
+        radius: ["traffic_signal", "traffic_sign_node", "street_lamp"].includes(feature.category) ? 6 : 4,
         color: style.color,
-        weight: style.weight,
-        opacity: 0.9,
+        weight: Math.max(2, style.weight),
+        opacity: 1,
         fillColor: style.color,
-        fillOpacity: 0.5,
+        fillOpacity: 0.85,
       }).bindTooltip(areaFeatureLabel(feature)).addTo(areaProcessedLayer);
       continue;
     }
@@ -5221,6 +5239,7 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
+document.getElementById("btn-area-reset-layers")?.addEventListener("click", resetAreaLayersKeepBounds);
 document.getElementById("btn-area-save-selection")?.addEventListener("click", saveCurrentAreaSelection);
 document.getElementById("btn-area-delete-selection")?.addEventListener("click", deleteSavedAreaSelection);
 document.getElementById("area-selection-preset")?.addEventListener("change", (event) => {
