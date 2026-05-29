@@ -4165,10 +4165,10 @@ def point_to_local_vector(point, origin):
 def _nudge_spline_point(spline_component, index):
     """Work around a UE5 editor bug where spline geometry written via Python
     does not register for PCG / rendering until a point is touched manually.
-    Displaces the point by 1 cm and restores it, forcing UE to invalidate."""
+    Displaces the point by 100 cm and restores it, forcing UE to invalidate."""
     try:
         location = spline_world_location_at_point(spline_component, index)
-        nudged = unreal.Vector(location.x + 1.0, location.y, location.z)
+        nudged = unreal.Vector(location.x + 100.0, location.y, location.z)
         if hasattr(spline_component, "set_location_at_spline_point"):
             spline_component.set_location_at_spline_point(
                 index, nudged, unreal.SplineCoordinateSpace.WORLD, True
@@ -4191,7 +4191,7 @@ def _force_spline_invalidation(spline_component, num_points):
     """Nudge every Nth point to force UE5 to register the full spline geometry.
     After writing all points, UE may still show a collapsed spline until a
     manual edit occurs.  Touching points programmatically works around this."""
-    step = max(1, num_points // 10)  # every 10th point at minimum
+    step = max(1, num_points // 5)  # every 5th point at minimum
     for index in range(0, num_points, step):
         _nudge_spline_point(spline_component, index)
     # Always nudge the last point too
@@ -4265,18 +4265,20 @@ def write_spline_points(spline_component, row):
     call_method_if_present(spline_component, "modify")
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, True)
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
-        spline_component.set_spline_point_type(index, point_type, True)
+        spline_component.set_spline_point_type(index, point_type, False)
     if hasattr(spline_component, "set_closed_loop"):
-        spline_component.set_closed_loop(bool(row.get("bClosed", False)), True)
+        spline_component.set_closed_loop(bool(row.get("bClosed", False)), False)
     elif bool(row.get("bClosed", False)):
         fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
     spline_component.update_spline()
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     call_method_if_present(spline_component, "post_edit_change")
+    # UE5 editor bug: spline may appear collapsed until a point is touched.
+    _force_spline_invalidation(spline_component, len(row["Points"]))
 
 
 def configure_spline_component(spline_component, row):
@@ -4335,9 +4337,10 @@ def set_actor_tags(actor, row):
 def create_street_spline_actor(actor_class, row):
     label = actor_label_for_spline(row)
     destroy_existing_actor_with_label(label)
+    actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
-        WORLD_OFFSET_CM,
+        actor_location,
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
