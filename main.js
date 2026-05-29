@@ -4261,11 +4261,11 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def write_spline_points(spline_component, row, actor_location):
+def write_spline_points(spline_component, row):
     call_method_if_present(spline_component, "modify")
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_local_vector(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, True)
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, True)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, True)
@@ -4277,15 +4277,12 @@ def write_spline_points(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     call_method_if_present(spline_component, "post_edit_change")
-    # UE5 editor bug: spline geometry may not register until a point is touched.
-    # Nudge multiple points to force proper invalidation for PCG and rendering.
-    _force_spline_invalidation(spline_component, len(row["Points"]))
 
 
-def configure_spline_component(spline_component, row, actor_location):
+def configure_spline_component(spline_component, row):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
-    write_spline_points(spline_component, row, actor_location)
+    write_spline_points(spline_component, row)
 
 
 def spline_world_location_at_point(spline_component, index):
@@ -4338,10 +4335,9 @@ def set_actor_tags(actor, row):
 def create_street_spline_actor(actor_class, row):
     label = actor_label_for_spline(row)
     destroy_existing_actor_with_label(label)
-    actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
-        actor_location,
+        WORLD_OFFSET_CM,
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
@@ -4349,11 +4345,8 @@ def create_street_spline_actor(actor_class, row):
     actor.set_actor_label(label)
     set_actor_tags(actor, row)
     spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row, actor_location)
+    configure_spline_component(spline_component, row)
     validate_spline_not_collapsed(spline_component, row)
-    # UE5 editor bug: setting the actor to its own location forces the
-    # same invalidation as manually dragging the BP in the viewport.
-    actor.set_actor_location(actor_location, False, False)
     return actor
 
 
