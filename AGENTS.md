@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.35 | 2026-05-29 20:26 +02:00 | Tooltip now shows ALL OSM tags (priority-sorted first, rest alphabetically) — no more missing data.
 - 0.1.34 | 2026-05-29 20:18 +02:00 | Rich hover tooltips on all area features showing all OSM tags (species, height, lanes, address, etc.).
 - 0.1.33 | 2026-05-29 19:21 +02:00 | Adds Esri World Imagery satellite layer toggle; export adapts to active layer (OSM or Esri tiles).
 - 0.1.32 | 2026-05-29 15:20 +02:00 | Fixes tile Y-axis inversion in map PNG export (was producing degenerate crops).

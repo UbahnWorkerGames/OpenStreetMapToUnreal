@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.34";
-const APP_VERSION_DATE = "2026-05-29 20:18 +02:00";
+const APP_VERSION = "0.1.35";
+const APP_VERSION_DATE = "2026-05-29 20:26 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -2232,90 +2232,41 @@ function buildAreaFeatureTooltip(feature) {
   const name = feature.name || "—";
   const osmId = feature.id ? String(feature.id).replace(/^(node|way|relation)\//, "") : "—";
 
-  // Wichtige Tags in Reihenfolge
-  const keyTags = [];
-  const addTag = (key, displayName) => {
-    const val = tags[key];
-    if (val !== undefined && val !== null && val !== "") {
-      keyTags.push({ key: displayName, value: String(val) });
-    }
-  };
-
-  addTag("highway", "Highway");
-  addTag("building", "Building");
-  addTag("natural", "Natural");
-  addTag("waterway", "Waterway");
-  addTag("railway", "Railway");
-  addTag("landuse", "Landuse");
-  addTag("amenity", "Amenity");
-  addTag("shop", "Shop");
-  addTag("tourism", "Tourism");
-  addTag("leisure", "Leisure");
-  addTag("barrier", "Barrier");
-  addTag("man_made", "Man Made");
-  addTag("power", "Power");
-  addTag("aeroway", "Aeroway");
-  addTag("surface", "Surface");
-  addTag("smoothness", "Smoothness");
-  addTag("height", "Height (m)");
-  addTag("building:height", "Bld Height (m)");
-  addTag("building:levels", "Levels");
-  addTag("roof:shape", "Roof Shape");
-  addTag("roof:colour", "Roof Color");
-  addTag("building:colour", "Bld Color");
-  addTag("building:material", "Material");
-  addTag("species", "Species");
-  addTag("genus", "Genus");
-  addTag("leaf_type", "Leaf Type");
-  addTag("leaf_cycle", "Leaf Cycle");
-  addTag("denotation", "Denotation");
-  addTag("diameter_crown", "Crown Ø (m)");
-  addTag("circumference", "Circ. (m)");
-  addTag("width", "Width (m)");
-  addTag("lanes", "Lanes");
-  addTag("maxspeed", "Max Speed");
-  addTag("oneway", "Oneway");
-  addTag("bridge", "Bridge");
-  addTag("tunnel", "Tunnel");
-  addTag("layer", "Layer");
-  addTag("ref", "Ref");
-  addTag("operator", "Operator");
-  addTag("addr:street", "Street");
-  addTag("addr:housenumber", "No.");
-  addTag("addr:city", "City");
-  addTag("addr:postcode", "ZIP");
-  addTag("traffic_sign", "Traffic Sign");
-  addTag("lamp_type", "Lamp Type");
-  addTag("lit", "Lit");
-  addTag("material", "Material");
-  addTag("colour", "Color");
-
-  // Restliche Tags die noch nicht gezeigt wurden
-  const shownKeys = new Set(keyTags.map((t) => t.key));
-  const knownKeys = new Set([
-    "name", "highway", "building", "natural", "waterway", "railway", "landuse",
-    "amenity", "shop", "tourism", "leisure", "barrier", "man_made", "power",
-    "aeroway", "surface", "smoothness", "height", "building:height",
-    "building:levels", "roof:shape", "roof:colour", "building:colour",
-    "building:material", "species", "genus", "leaf_type", "leaf_cycle",
-    "denotation", "diameter_crown", "circumference", "width", "lanes",
-    "maxspeed", "oneway", "bridge", "tunnel", "layer", "ref", "operator",
+  const PRIORITY_KEYS = [
+    "highway", "building", "natural", "waterway", "railway", "landuse",
+    "amenity", "shop", "tourism", "leisure", "barrier", "man_made", "power", "aeroway",
+    "surface", "smoothness",
+    "height", "building:height", "building:levels", "roof:shape", "roof:colour",
+    "building:colour", "building:material",
+    "species", "genus", "leaf_type", "leaf_cycle", "denotation",
+    "diameter_crown", "circumference",
+    "width", "lanes", "maxspeed", "oneway", "bridge", "tunnel", "layer",
+    "ref", "operator",
     "addr:street", "addr:housenumber", "addr:city", "addr:postcode",
-    "traffic_sign", "lamp_type", "lit", "material", "colour"
-  ]);
+    "traffic_sign", "lamp_type", "lit", "material", "colour",
+  ];
+
+  const priority = [];
+  const rest = [];
   for (const [k, v] of Object.entries(tags)) {
-    if (!shownKeys.has(k) && !knownKeys.has(k) && v) {
-      keyTags.push({ key: k, value: String(v) });
+    if (k === "name" || v === undefined || v === null || v === "") continue;
+    const entry = { key: k, value: String(v) };
+    if (PRIORITY_KEYS.includes(k)) {
+      priority.push(entry);
+    } else {
+      rest.push(entry);
     }
   }
+  rest.sort((a, b) => a.key.localeCompare(b.key));
+  const allTags = [...priority, ...rest];
 
-  let html = `<div style="font-size:12px;max-width:300px">`;
+  let html = `<div style="font-size:12px;max-width:320px">`;
   html += `<strong>${escapeHtml(label)}</strong><br>`;
   html += `<span style="color:#888">Name:</span> ${escapeHtml(name)}<br>`;
   html += `<span style="color:#888">OSM ID:</span> ${escapeHtml(osmId)}`;
-  if (keyTags.length) {
+  if (allTags.length) {
     html += `<hr style="margin:4px 0;border-color:#444">`;
-    for (const { key, value } of keyTags) {
+    for (const { key, value } of allTags) {
       html += `<span style="color:#888">${escapeHtml(key)}:</span> ${escapeHtml(value)}<br>`;
     }
   }
