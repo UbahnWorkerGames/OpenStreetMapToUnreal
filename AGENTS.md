@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.18 | 2026-05-29 13:04 +02:00 | Clips full area road ways to a context margin and deduplicates generated street actors by final Outliner label before spawn.
 - 0.1.17 | 2026-05-29 12:49 +02:00 | Loads full Overpass way geometry for area roads and groups directional roads by street name instead of highway subclass.
 - 0.1.16 | 2026-05-29 12:35 +02:00 | Normalizes road spline export groups to remove duplicate direction overlays and hardens actor labels against missing street names.
 - 0.1.15 | 2026-05-29 12:18 +02:00 | Preserves umlauts in actor labels, merges same-road directional carriageways before export, and maps area coordinates as X=north/Y=east.

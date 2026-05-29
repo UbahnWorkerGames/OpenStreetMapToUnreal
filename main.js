@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.17";
-const APP_VERSION_DATE = "2026-05-29 12:49 +02:00";
+const APP_VERSION = "0.1.18";
+const APP_VERSION_DATE = "2026-05-29 13:04 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -273,6 +273,7 @@ const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.2;
 const AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M = 18;
 const AREA_STITCH_MAX_DISTANCE_M = 18;
 const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
+const AREA_WAY_CONTEXT_MARGIN_M = 180;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service", "building", "tree"]);
@@ -510,6 +511,18 @@ function areaBoundsSizeKm2(bounds) {
   const southEast = [bounds.getSouth(), bounds.getEast()];
   const northWest = [bounds.getNorth(), bounds.getWest()];
   return (haversineM(southWest, southEast) * haversineM(southWest, northWest)) / 1_000_000;
+}
+
+function expandBoundsByMeters(bounds, meters) {
+  if (!bounds?.isValid?.() || !(meters > 0)) return bounds;
+  const center = bounds.getCenter();
+  const m = mpd(center.lat);
+  const dLat = meters / m.lat;
+  const dLon = meters / m.lon;
+  return L.latLngBounds(
+    [bounds.getSouth() - dLat, bounds.getWest() - dLon],
+    [bounds.getNorth() + dLat, bounds.getEast() + dLon],
+  );
 }
 
 // ─── Geo-Mathematik ──────────────────────────────────────────────────────────
@@ -1950,6 +1963,7 @@ function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
 function buildAreaFeatures(data, bounds) {
   const features = [];
   const seenSignatures = new Set();
+  const wayContextBounds = expandBoundsByMeters(bounds, AREA_WAY_CONTEXT_MARGIN_M);
   for (const el of data.elements || []) {
     if (el.type === "node" && Number.isFinite(el.lat) && Number.isFinite(el.lon)) {
       if (!bounds.contains(L.latLng(el.lat, el.lon))) continue;
@@ -1987,7 +2001,7 @@ function buildAreaFeatures(data, bounds) {
       continue;
     }
     const clippedParts = AREA_FULL_WAY_SPLINE_CATEGORIES.has(category)
-      ? [rawGeometry]
+      ? clipPolylineToBounds(rawGeometry, wayContextBounds)
       : clipPolylineToBounds(rawGeometry, bounds);
     for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
       const clippedGeometry = clippedParts[partIndex];
@@ -3930,6 +3944,30 @@ def actor_label_for_spline(row):
     return f"BP_{kind}_{name}"
 
 
+def spline_endpoint_span(row):
+    points = row.get("Points")
+    if not isinstance(points, list) or len(points) < 2:
+        return 0.0
+    return vector_distance(point_to_vector(points[0]), point_to_vector(points[-1]))
+
+
+def dedupe_spline_rows(rows):
+    by_label = {}
+    duplicates = 0
+    for row in rows:
+        label = actor_label_for_spline(row)
+        existing = by_label.get(label)
+        if existing is None:
+            by_label[label] = row
+            continue
+        duplicates += 1
+        if spline_endpoint_span(row) > spline_endpoint_span(existing):
+            by_label[label] = row
+    if duplicates:
+        unreal.log(f"[INFO] Removed {duplicates} duplicate street spline row(s) by actor label before spawn")
+    return list(by_label.values())
+
+
 def point_to_vector(point):
     if not isinstance(point, list) or len(point) != 3:
         fail(f"Invalid point: {point}")
@@ -4187,8 +4225,9 @@ def create_prop_actor(actor_class, row):
 def main():
     bp_class_cache = {}
     point_count = 0
-    for index, source_row in enumerate(STREET_SPLINES):
-        row = require_spline(source_row, index)
+    rows = [require_spline(source_row, index) for index, source_row in enumerate(STREET_SPLINES)]
+    rows = dedupe_spline_rows(rows)
+    for row in rows:
         point_count += len(row["Points"])
         actor_class = bp_class_for_row(row, bp_class_cache)
         create_street_spline_actor(actor_class, row)
@@ -4201,7 +4240,7 @@ def main():
     prop_actor_class = load_bp_class(BP_PATHS["prop"]) if PROPS else None
     for row in PROPS:
         create_prop_actor(prop_actor_class, row)
-    unreal.log(f"[INFO] Imported {len(STREET_SPLINES)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
+    unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
 
 
 main()
