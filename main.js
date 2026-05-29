@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.9";
-const APP_VERSION_DATE = "2026-05-29 10:56 +02:00";
+const APP_VERSION = "0.1.10";
+const APP_VERSION_DATE = "2026-05-29 11:07 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3871,8 +3871,8 @@ def set_payload_if_present(actor, row, object_type):
 
 
 def configure_spline_component(spline_component, row):
-    set_editor_property_if_present(spline_component, "override_construction_script", False)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
         spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
