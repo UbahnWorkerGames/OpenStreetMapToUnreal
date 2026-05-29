@@ -1660,9 +1660,7 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
 (
 ${clauses}${relationClauses ? `\n${relationClauses}` : ""}
 );
-out body;
->;
-out geom;`;
+out body geom;`;
 }
 
 function outCode(lat, lon, bounds) {
