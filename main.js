@@ -4120,6 +4120,17 @@ def sanitize_label_part(value):
     return sanitized or "Unnamed"
 
 
+_LABEL_COUNTS = {}
+
+def _unique_label(base_label):
+    """Return a unique actor label by appending a counter when collisions occur."""
+    count = _LABEL_COUNTS.get(base_label, 0) + 1
+    _LABEL_COUNTS[base_label] = count
+    if count == 1:
+        return base_label
+    return f"{base_label}_{count:03d}"
+
+
 def label_part(value, fallback):
     sanitized = sanitize_label_part(value)
     if sanitized == "Unnamed":
@@ -4413,7 +4424,7 @@ def create_street_spline_actor(actor_class, row):
 def create_building_actor(actor_class, row):
     osm_id = sanitize_label_part(str(row.get("OsmId", "")))
     name_part = sanitize_label_part(row.get("BuildingKey", row.get("Name", "Building")))
-    label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}"
+    label = _unique_label(f"{BUILDING_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}")
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -4449,7 +4460,7 @@ def create_building_actor(actor_class, row):
 def create_tree_actor(actor_class, row):
     osm_id = sanitize_label_part(str(row.get("OsmId", "")))
     name_part = sanitize_label_part(row.get("TreeKey", row.get("Name", "Tree")))
-    label = f"{TREE_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}"
+    label = _unique_label(f"{TREE_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}")
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -4481,7 +4492,8 @@ def create_tree_actor(actor_class, row):
 
 def create_prop_actor(actor_class, row):
     label_name = row.get("DisplayName") or row.get("Name") or row.get("Type") or row.get("PropKey", "Prop")
-    label = f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(label_name)}_{sanitize_label_part(row.get('OsmId', ''))}"
+    osm_id = sanitize_label_part(str(row.get("OsmId", "")))
+    label = _unique_label(f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(label_name)}_{osm_id}")
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -5292,7 +5304,6 @@ async function captureMapImageForGroundPlane() {
   if (!areaSelectionBounds?.isValid?.()) return null;
   const center = areaSelectionBounds.getCenter();
   const zoom = map.getZoom();
-  // Use the staticmap API with reasonable dimensions
   const maxDim = 1024;
   const sw = areaSelectionBounds.getSouthWest();
   const ne = areaSelectionBounds.getNorthEast();
@@ -5305,7 +5316,10 @@ async function captureMapImageForGroundPlane() {
   h = Math.max(64, Math.min(2000, h));
   const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=${zoom}&size=${w}x${h}&maptype=mapnik`;
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
     if (!response.ok) return null;
     const blob = await response.blob();
     return new Promise((resolve) => {
