@@ -3538,6 +3538,7 @@ function buildAreaPythonExportPayload() {
   if (!transform) return null;
 
   const splines = buildAreaPythonSplineData(transform) || [];
+  const extent = buildAreaExportExtent(transform);
   return {
     origin_wgs84: transform.originWgs84,
     origin_mode: transform.originMode,
@@ -3545,6 +3546,27 @@ function buildAreaPythonExportPayload() {
     buildings: buildBuildingData(selected, transform),
     trees: buildTreeData(selected, transform),
     props: buildPropData(selected, transform),
+    extent_cm: extent,
+  };
+}
+
+function buildAreaExportExtent(transform) {
+  if (!areaSelectionBounds?.isValid?.()) return null;
+  const sw = transform.toPointCm([areaSelectionBounds.getSouth(), areaSelectionBounds.getWest()]);
+  const ne = transform.toPointCm([areaSelectionBounds.getNorth(), areaSelectionBounds.getEast()]);
+  const minX = Math.min(sw.X, ne.X);
+  const maxX = Math.max(sw.X, ne.X);
+  const minY = Math.min(sw.Y, ne.Y);
+  const maxY = Math.max(sw.Y, ne.Y);
+  return {
+    center_x: +((minX + maxX) * 0.5).toFixed(1),
+    center_y: +((minY + maxY) * 0.5).toFixed(1),
+    width_cm: +(maxX - minX).toFixed(1),
+    height_cm: +(maxY - minY).toFixed(1),
+    min_x: minX, max_x: maxX,
+    min_y: minY, max_y: maxY,
+    wgs84_sw: { lat: areaSelectionBounds.getSouth(), lon: areaSelectionBounds.getWest() },
+    wgs84_ne: { lat: areaSelectionBounds.getNorth(), lon: areaSelectionBounds.getEast() },
   };
 }
 
@@ -4002,7 +4024,7 @@ async function exportHeightmap() {
   }
 }
 
-function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
+function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage = null) {
   const splines = Array.isArray(payload) ? payload : (payload?.splines || []);
   const buildings = Array.isArray(payload) ? [] : (payload?.buildings || []);
   const trees = Array.isArray(payload) ? [] : (payload?.trees || []);
@@ -4015,8 +4037,12 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths) {
     ...DEFAULT_AREA_BP_PATHS,
     ...(bpPaths || {}),
   }));
+  const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
+  const groundImageLiteral = groundPlaneImage ? JSON.stringify(JSON.stringify(groundPlaneImage)) : "\"\"";
   return `import json
 import re
+import os
+import base64
 
 import unreal
 
@@ -4026,10 +4052,13 @@ BUILDINGS = json.loads(${buildingJsonLiteral})
 TREES = json.loads(${treeJsonLiteral})
 PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
+GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
+GROUND_PLANE_IMAGE_B64 = json.loads(${groundImageLiteral})
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
 PROP_ACTOR_LABEL_PREFIX = "OSM_PROP"
+GROUND_PLANE_ACTOR_LABEL = "GroundPlane_OSM_Map"
 SPLINE_COMPONENT_NAMES = ["StreetSpline", "Spline"]
 WORLD_OFFSET_CM = unreal.Vector(0.0, 0.0, 0.0)
 FORCE_ZERO_Z = True
@@ -4482,6 +4511,113 @@ def create_prop_actor(actor_class, row):
     return actor
 
 
+def _create_ground_plane():
+    """Spawn a plane under all imported elements with the map texture applied."""
+    if not isinstance(GROUND_PLANE_EXTENT, dict):
+        return
+
+    extent = GROUND_PLANE_EXTENT
+    center_x = float(extent.get("center_x", 0))
+    center_y = float(extent.get("center_y", 0))
+    width_cm = float(extent.get("width_cm", 0))
+    height_cm = float(extent.get("height_cm", 0))
+    if width_cm <= 0 or height_cm <= 0:
+        return
+
+    plane_mesh = unreal.EditorAssetLibrary.load_asset("/Engine/BasicShapes/Plane")
+    if not plane_mesh:
+        unreal.log_warning("[GroundPlane] Could not load /Engine/BasicShapes/Plane")
+        return
+
+    destroy_existing_actor_with_label(GROUND_PLANE_ACTOR_LABEL)
+
+    location = unreal.Vector(center_x, center_y, -10.0)
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
+        unreal.StaticMeshActor, location, unreal.Rotator(0, 0, 0)
+    )
+    if not actor:
+        unreal.log_warning("[GroundPlane] Failed to spawn actor")
+        return
+
+    actor.set_actor_label(GROUND_PLANE_ACTOR_LABEL)
+    mesh_comp = actor.static_mesh_component
+    mesh_comp.set_static_mesh(plane_mesh)
+    mesh_comp.set_world_scale3d(
+        unreal.Vector(width_cm / 100.0, height_cm / 100.0, 1.0)
+    )
+
+    if isinstance(GROUND_PLANE_IMAGE_B64, str) and GROUND_PLANE_IMAGE_B64.startswith("data:"):
+        try:
+            _apply_map_texture(mesh_comp)
+        except Exception as exc:
+            unreal.log_warning(f"[GroundPlane] Map texture failed (import PNG manually): {exc}")
+
+    unreal.log(
+        f"[INFO] Ground plane: {width_cm:.0f} x {height_cm:.0f} cm "
+        f"at ({center_x:.0f}, {center_y:.0f}, Z=-10)"
+    )
+
+
+def _apply_map_texture(mesh_component):
+    header, b64_data = GROUND_PLANE_IMAGE_B64.split(",", 1)
+    png_bytes = base64.b64decode(b64_data)
+
+    content_dir = unreal.Paths.project_content_dir()
+    png_dir = os.path.join(content_dir, "GroundPlane")
+    os.makedirs(png_dir, exist_ok=True)
+    png_path = os.path.join(png_dir, "MapTexture.png")
+    with open(png_path, "wb") as fh:
+        fh.write(png_bytes)
+
+    import_task = unreal.AssetImportTask()
+    import_task.filename = png_path
+    import_task.destination_path = "/Game/GroundPlane/"
+    import_task.destination_name = "MapTexture"
+    import_task.replace_existing = True
+    import_task.automated = True
+    import_task.save = True
+
+    asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+    asset_tools.import_asset_tasks([import_task])
+
+    texture = unreal.EditorAssetLibrary.load_asset("/Game/GroundPlane/MapTexture")
+    if not texture:
+        return
+
+    existing = unreal.EditorAssetLibrary.does_asset_exist("/Game/GroundPlane/M_GroundPlane_Map")
+    if existing:
+        unreal.EditorAssetLibrary.delete_asset("/Game/GroundPlane/M_GroundPlane_Map")
+
+    material = asset_tools.create_asset(
+        "M_GroundPlane_Map", "/Game/GroundPlane/",
+        unreal.Material, unreal.MaterialFactoryNew()
+    )
+    if not material:
+        return
+
+    try:
+        material.set_editor_property("shading_model", getattr(unreal.MaterialShadingModel, "MSM_UNLIT", 1))
+    except Exception:
+        pass
+
+    try:
+        tex_expr = unreal.MaterialEditingLibrary.create_material_expression(
+            material, unreal.MaterialExpressionTextureSample, -300, 0
+        )
+        if tex_expr:
+            tex_expr.set_editor_property("texture", texture)
+            unreal.MaterialEditingLibrary.connect_material_property(
+                tex_expr, "RGB", unreal.MaterialProperty.MP_EMISSIVE_COLOR
+            )
+        unreal.MaterialEditingLibrary.recompile_material(material)
+    except Exception:
+        pass
+
+    material.post_edit_change()
+    mesh_component.set_material(0, material)
+    unreal.log("[INFO] Ground plane map texture applied")
+
+
 def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
@@ -4505,6 +4641,7 @@ def main():
     prop_actor_class = load_bp_class(BP_PATHS["prop"]) if PROPS else None
     for row in PROPS:
         create_prop_actor(prop_actor_class, row)
+    _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
 
 
@@ -5132,7 +5269,7 @@ async function copyPythonCodeFromModal() {
   }
 }
 
-function exportAreaUnrealPython() {
+async function exportAreaUnrealPython() {
   try {
     const payload = buildAreaPythonExportPayload();
     if (!payload) {
@@ -5141,12 +5278,43 @@ function exportAreaUnrealPython() {
     }
     const bpPaths = getAreaBpPathsForExport();
     for (const [kind, path] of Object.entries(bpPaths)) setStoredAreaBpPath(kind, path);
-    const code = buildCompactAreaUnrealPythonScript(payload, bpPaths);
+    const groundPlaneImage = await captureMapImageForGroundPlane();
+    const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
     setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebäude / ${payload.trees.length} Bäume / ${payload.props.length} Props eingebettet`);
   } catch (error) {
     setStatus(`UE-Python-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
+async function captureMapImageForGroundPlane() {
+  if (!areaSelectionBounds?.isValid?.()) return null;
+  const center = areaSelectionBounds.getCenter();
+  const zoom = map.getZoom();
+  // Use the staticmap API with reasonable dimensions
+  const maxDim = 1024;
+  const sw = areaSelectionBounds.getSouthWest();
+  const ne = areaSelectionBounds.getNorthEast();
+  const aspectW = ne.lng - sw.lng;
+  const aspectH = ne.lat - sw.lat;
+  let w, h;
+  if (aspectW > aspectH) { w = maxDim; h = Math.round(maxDim * (aspectH / aspectW)); }
+  else { h = maxDim; w = Math.round(maxDim * (aspectW / aspectH)); }
+  w = Math.max(64, Math.min(2000, w));
+  h = Math.max(64, Math.min(2000, h));
+  const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=${zoom}&size=${w}x${h}&maptype=mapnik`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
   }
 }
 
