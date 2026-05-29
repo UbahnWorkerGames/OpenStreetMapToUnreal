@@ -5301,33 +5301,106 @@ async function exportAreaUnrealPython() {
   }
 }
 
+function latLngToTileXY(lat, lng, zoom) {
+  const n = Math.pow(2, zoom);
+  const x = (lng + 180) / 360 * n;
+  const y = (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n;
+  return { x: Math.floor(x), y: Math.floor(y), fx: x - Math.floor(x), fy: y - Math.floor(y) };
+}
+
+const MAP_TILE_URL = "https://tile.openstreetmap.org";
+const TILE_SIZE = 256;
+const OSM_MAX_ZOOM = 19;
+
+async function fetchTileAsImage(z, x, y) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`tile ${z}/${x}/${y} failed`));
+    img.src = `${MAP_TILE_URL}/${z}/${x}/${y}.png`;
+  });
+}
+
+async function renderMapToCanvas(bounds, zoom) {
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+
+  // Use zoom+1 for higher res, clamped to OSM max
+  const renderZoom = Math.min(OSM_MAX_ZOOM, zoom + 1);
+  const tileSW = latLngToTileXY(sw.lat, sw.lng, renderZoom);
+  const tileNE = latLngToTileXY(ne.lat, ne.lng, renderZoom);
+
+  const minTX = Math.max(0, Math.floor(tileSW.x));
+  const maxTX = Math.min((1 << renderZoom) - 1, Math.floor(tileNE.x));
+  const minTY = Math.max(0, Math.floor(tileSW.y));
+  const maxTY = Math.min((1 << renderZoom) - 1, Math.floor(tileNE.y));
+
+  const cols = maxTX - minTX + 1;
+  const rows = maxTY - minTY + 1;
+  const canvasW = cols * TILE_SIZE;
+  const canvasH = rows * TILE_SIZE;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext("2d");
+
+  // Load all tiles in parallel batches
+  const BATCH_SIZE = 8;
+  const tiles = [];
+  for (let ty = minTY; ty <= maxTY; ty++) {
+    for (let tx = minTX; tx <= maxTX; tx++) {
+      tiles.push({ tx, ty, dx: (tx - minTX) * TILE_SIZE, dy: (ty - minTY) * TILE_SIZE });
+    }
+  }
+
+  for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
+    const batch = tiles.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(t => fetchTileAsImage(renderZoom, t.tx, t.ty))
+    );
+    results.forEach((r, j) => {
+      if (r.status === "fulfilled") {
+        const t = batch[j];
+        ctx.drawImage(r.value, t.dx, t.dy, TILE_SIZE, TILE_SIZE);
+      }
+    });
+  }
+
+  // Calculate the pixel region within the canvas that exactly covers the bounds
+  const topLeft = latLngToTileXY(ne.lat, sw.lng, renderZoom);
+  const bottomRight = latLngToTileXY(sw.lat, ne.lng, renderZoom);
+
+  const px1 = (topLeft.x - minTX) * TILE_SIZE;
+  const py1 = (topLeft.y - minTY) * TILE_SIZE;
+  const px2 = (bottomRight.x - minTX) * TILE_SIZE;
+  const py2 = (bottomRight.y - minTY) * TILE_SIZE;
+
+  const cropX = Math.max(0, Math.floor(px1));
+  const cropY = Math.max(0, Math.floor(py1));
+  const cropW = Math.min(canvasW - cropX, Math.ceil(px2 - px1));
+  const cropH = Math.min(canvasH - cropY, Math.ceil(py2 - py1));
+
+  return { canvas, crop: { x: cropX, y: cropY, w: cropW, h: cropH } };
+}
+
 async function captureMapImageForGroundPlane() {
   if (!areaSelectionBounds?.isValid?.()) return null;
-  const center = areaSelectionBounds.getCenter();
   const zoom = map.getZoom();
-  const maxDim = 1024;
-  const sw = areaSelectionBounds.getSouthWest();
-  const ne = areaSelectionBounds.getNorthEast();
-  const aspectW = ne.lng - sw.lng;
-  const aspectH = ne.lat - sw.lat;
-  let w, h;
-  if (aspectW > aspectH) { w = maxDim; h = Math.round(maxDim * (aspectH / aspectW)); }
-  else { h = maxDim; w = Math.round(maxDim * (aspectW / aspectH)); }
-  w = Math.max(64, Math.min(2000, w));
-  h = Math.max(64, Math.min(2000, h));
-  const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=${zoom}&size=${w}x${h}&maptype=mapnik`;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!response.ok) return null;
-    const blob = await response.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
+    const { canvas, crop } = await renderMapToCanvas(areaSelectionBounds, zoom);
+    // Resize to max 1024px on longest side for embedded base64
+    const maxDim = 1024;
+    let w = crop.w, h = crop.h;
+    if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+    else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+    const resized = document.createElement("canvas");
+    resized.width = w;
+    resized.height = h;
+    const rctx = resized.getContext("2d");
+    rctx.drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
+    return resized.toDataURL("image/png");
   } catch {
     return null;
   }
@@ -5342,31 +5415,27 @@ async function exportMapPng() {
   try {
     const center = areaSelectionBounds.getCenter();
     const zoom = map.getZoom();
-    const maxDim = 2048;
-    const sw = areaSelectionBounds.getSouthWest();
-    const ne = areaSelectionBounds.getNorthEast();
-    const aspectW = ne.lng - sw.lng;
-    const aspectH = ne.lat - sw.lat;
-    let w, h;
-    if (aspectW > aspectH) { w = maxDim; h = Math.round(maxDim * (aspectH / aspectW)); }
-    else { h = maxDim; w = Math.round(maxDim * (aspectW / aspectH)); }
-    w = Math.max(64, Math.min(3000, w));
-    h = Math.max(64, Math.min(3000, h));
-    const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=${zoom}&size=${w}x${h}&maptype=mapnik`;
+    const { canvas, crop } = await renderMapToCanvas(areaSelectionBounds, zoom);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
+    // Crop and export at full resolution
+    const cropped = document.createElement("canvas");
+    cropped.width = crop.w;
+    cropped.height = crop.h;
+    const cctx = cropped.getContext("2d");
+    cctx.drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
 
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `uemap_ground_${center.lat.toFixed(4)}_${center.lng.toFixed(4)}_z${zoom}.png`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setStatus(`Map PNG exportiert: ${w}x${h}px, Zoom ${zoom}`);
+    cropped.toBlob((blob) => {
+      if (!blob) {
+        setStatus("Map-PNG-Export: Canvas toBlob fehlgeschlagen.", true);
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `uemap_ground_${center.lat.toFixed(4)}_${center.lng.toFixed(4)}_z${zoom}.png`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus(`Map PNG exportiert: ${crop.w}x${crop.h}px, Zoom ${zoom}+1`);
+    }, "image/png");
   } catch (error) {
     setStatus(`Map-PNG-Export fehlgeschlagen: ${error.message}`, true);
   }
