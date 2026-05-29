@@ -5339,6 +5339,7 @@ function tileXYFloat(lat, lng, zoom) {
 function latLngToTileXY(lat, lng, zoom) {
   const t = tileXYFloat(lat, lng, zoom);
   return { x: Math.floor(t.x), y: Math.floor(t.y), fx: t.x - Math.floor(t.x), fy: t.y - Math.floor(t.y) };
+}
 // ─── Map Tile Export (canvas-based, für Ground-Plane / Map PNG) ─────────────
 
 const TILE_SIZE = 256;
