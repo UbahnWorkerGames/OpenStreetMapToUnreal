@@ -77,6 +77,7 @@ const ELEVATION_API_URL = "https://api.open-meteo.com/v1/elevation";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
+const AREA_CACHE_STORAGE_KEY = "uemap.areaCache.v1";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 const AREA_WORLD_ORIGIN_WGS84 = { lat: 52.52, lon: 13.405 };
 const DEFAULT_AREA_BP_PATHS = {
@@ -4380,7 +4381,9 @@ def create_street_spline_actor(actor_class, row):
     # Now that points are verified correct, let the CS build visual geometry
     set_editor_property_if_present(spline_component, "override_construction_script", False)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
-    actor.rerun_construction_scripts()
+    # rerun_construction_scripts was added in UE 5.3; older versions expose run_construction_scripts
+    if not call_method_if_present(actor, "rerun_construction_scripts"):
+        call_method_if_present(actor, "run_construction_scripts")
     return actor
 
 
@@ -5543,6 +5546,21 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       else renderAreaTransitLinesOnlyStatus();
       return true;
     }
+    // Try localStorage cache so page reload doesn't re-query Overpass
+    if (!areaCache) {
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(AREA_CACHE_STORAGE_KEY) || "null");
+        if (stored?.key === cacheKey && Array.isArray(stored.features)) {
+          areaCache = stored;
+          areaFeatures = stored.features;
+          detectedAreaTransitLines = stored.transitLines || [];
+          if (areaFeatures.length) renderAreaFeatures();
+          else renderAreaTransitLinesOnlyStatus();
+          setStatus(`Aus localStorage geladen (${areaFeatures.length} Features).`);
+          return true;
+        }
+      } catch { /* ignore corrupt cache */ }
+    }
 
     const layerLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
     showCancelButton();
@@ -5705,6 +5723,8 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
 
     areaFeatures = [...stitchConnectedAreaFeatures(mergeAreaCenterlines(lineFeatures)), ...pointFeatures];
     areaCache = { key: cacheKey, bounds, features: areaFeatures, transitLines: detectedAreaTransitLines };
+    // Persist to localStorage so page reload doesn't re-query Overpass
+    try { window.localStorage.setItem(AREA_CACHE_STORAGE_KEY, JSON.stringify(areaCache)); } catch { /* quota exceeded */ }
 
     hideCancelButton();
     if (!areaFeatures.length && !detectedAreaTransitLines.length) {
