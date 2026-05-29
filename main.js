@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.10";
-const APP_VERSION_DATE = "2026-05-29 11:07 +02:00";
+const APP_VERSION = "0.1.11";
+const APP_VERSION_DATE = "2026-05-29 11:18 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3819,6 +3819,11 @@ def point_to_vector(point):
     )
 
 
+def point_to_local_vector(point, origin):
+    world = point_to_vector(point)
+    return unreal.Vector(world.x - origin.x, world.y - origin.y, world.z - origin.z)
+
+
 def require_spline(row, index):
     if not isinstance(row, dict):
         fail(f"Spline {index} must be an object")
@@ -3870,12 +3875,12 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def configure_spline_component(spline_component, row):
+def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(point_to_local_vector(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -3936,16 +3941,17 @@ def set_actor_tags(actor, row):
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
     destroy_existing_actor_with_label(label)
+    actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
-        unreal.Vector(0.0, 0.0, 0.0),
+        actor_location,
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)
     spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row)
+    configure_spline_component(spline_component, row, actor_location)
     validate_spline_not_collapsed(spline_component, row)
     set_actor_tags(actor, row)
     return actor
