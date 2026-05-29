@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.8";
-const APP_VERSION_DATE = "2026-05-29 10:47 +02:00";
+const APP_VERSION = "0.1.9";
+const APP_VERSION_DATE = "2026-05-29 10:56 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3875,7 +3875,7 @@ def configure_spline_component(spline_component, row):
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, False)
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -3936,10 +3936,9 @@ def set_actor_tags(actor, row):
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
     destroy_existing_actor_with_label(label)
-    actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
-        actor_location,
+        unreal.Vector(0.0, 0.0, 0.0),
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
