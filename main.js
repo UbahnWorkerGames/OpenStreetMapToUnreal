@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.25";
-const APP_VERSION_DATE = "2026-05-29 14:36 +02:00";
+const APP_VERSION = "0.1.26";
+const APP_VERSION_DATE = "2026-05-29 14:49 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -4193,6 +4193,17 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
+def call_method_if_present(obj, method_name):
+    method = getattr(obj, method_name, None)
+    if method is None:
+        return False
+    try:
+        method()
+        return True
+    except Exception:
+        return False
+
+
 def set_tags(actor, tags):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
@@ -4214,6 +4225,7 @@ def set_payload_if_present(actor, row, object_type):
 
 
 def write_spline_points(spline_component, row, actor_location):
+    call_method_if_present(spline_component, "modify")
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
         spline_component.add_spline_point(point_to_local_vector(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
@@ -4225,11 +4237,14 @@ def write_spline_points(spline_component, row, actor_location):
     elif bool(row.get("bClosed", False)):
         fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
     spline_component.update_spline()
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    call_method_if_present(spline_component, "post_edit_change")
 
 
 def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     write_spline_points(spline_component, row, actor_location)
 
 
