@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.18";
-const APP_VERSION_DATE = "2026-05-29 13:04 +02:00";
+const APP_VERSION = "0.1.19";
+const APP_VERSION_DATE = "2026-05-29 13:17 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3041,6 +3041,43 @@ function areaFeatureWidthM(feature) {
   }
 }
 
+function areaActorLabelPart(value, fallback = "Unbenannt") {
+  const source = String(value || fallback || "Unbenannt").trim();
+  return source.replace(/[^\p{L}\p{N}_]+/gu, "_").replace(/^_+|_+$/g, "") || "Unbenannt";
+}
+
+function areaRoadKindLabel(feature) {
+  switch (feature.category) {
+    case "major_road":
+      return "Hauptstraße";
+    case "city_road":
+      return "Stadtstraße";
+    case "service":
+      return "Service";
+    case "motorway":
+      return "Autobahn";
+    case "cycleway":
+      return "Radweg";
+    case "footway":
+      return "Fußweg";
+    case "rail_tram":
+      return "Tram";
+    case "rail_train":
+      return "Bahn";
+    case "rail_subway":
+      return "U-Bahn";
+    case "bus":
+      return "Bus";
+    default:
+      return areaFeatureExportClass(feature) || feature.category || "Straße";
+  }
+}
+
+function areaSplineActorLabel(feature) {
+  const name = feature.name || feature.tags?.name || feature.tags?.ref || feature.key;
+  return `BP_${areaActorLabelPart(areaRoadKindLabel(feature), "Straße")}_${areaActorLabelPart(name, feature.key)}`;
+}
+
 function areaPcgRowName(key, pointIndex) {
   return `${key}_${String(pointIndex).padStart(4, "0")}`;
 }
@@ -3072,6 +3109,7 @@ function buildAreaPcgSplines() {
       rows.push({
         ObjectType: "OSM_SPLINE_POINT",
         Name: areaPcgRowName(feature.key, pointIndex),
+        ActorLabel: areaSplineActorLabel(feature),
         SplineKey: feature.key,
         PointIndex: pointIndex,
         PointCount: pointCount,
@@ -3104,6 +3142,7 @@ function buildAreaPythonSplineData(transform = null) {
     return {
       ObjectType: "OSM_SPLINE",
       Name: feature.name || feature.key,
+      ActorLabel: areaSplineActorLabel(feature),
       SplineKey: feature.key,
       Type: feature.category,
       Shape: feature.shape || "line",
@@ -3936,12 +3975,10 @@ def road_kind_label(row):
 
 
 def actor_label_for_spline(row):
-    key = row.get("SplineKey")
-    if not isinstance(key, str) or not key:
-        fail(f"Cannot build actor label without SplineKey: {row}")
-    kind = label_part(road_kind_label(row), row.get("Type") or row.get("OsmClass") or "Straße")
-    name = label_part(row.get("Street") or row.get("Name") or key, key)
-    return f"BP_{kind}_{name}"
+    label = row.get("ActorLabel")
+    if not isinstance(label, str) or not label.strip() or "Unnamed" in label:
+        fail(f"Invalid ActorLabel in spline row: {row}")
+    return label.strip()
 
 
 def spline_endpoint_span(row):
