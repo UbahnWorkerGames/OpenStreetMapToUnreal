@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.24 | 2026-05-29 14:04 +02:00 | Mirrors the area coordinate transform downward by negating north.
 - 0.1.23 | 2026-05-29 13:59 +02:00 | Mirrors the area coordinate transform on UE Y by negating east.
 - 0.1.22 | 2026-05-29 13:54 +02:00 | Removes the remaining UE Y-axis mirror from the area coordinate transform.
 - 0.1.21 | 2026-05-29 13:45 +02:00 | Normalizes exported spline direction once and applies the requested rotated/mirrored area coordinate transform.
