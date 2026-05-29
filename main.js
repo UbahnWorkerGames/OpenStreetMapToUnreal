@@ -5301,11 +5301,16 @@ async function exportAreaUnrealPython() {
   }
 }
 
-function latLngToTileXY(lat, lng, zoom) {
+function tileXYFloat(lat, lng, zoom) {
   const n = Math.pow(2, zoom);
   const x = (lng + 180) / 360 * n;
   const y = (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n;
-  return { x: Math.floor(x), y: Math.floor(y), fx: x - Math.floor(x), fy: y - Math.floor(y) };
+  return { x, y };
+}
+
+function latLngToTileXY(lat, lng, zoom) {
+  const t = tileXYFloat(lat, lng, zoom);
+  return { x: Math.floor(t.x), y: Math.floor(t.y), fx: t.x - Math.floor(t.x), fy: t.y - Math.floor(t.y) };
 }
 
 const MAP_TILE_URL = "https://tile.openstreetmap.org";
@@ -5328,13 +5333,15 @@ async function renderMapToCanvas(bounds, zoom) {
 
   // Use zoom+1 for higher res, clamped to OSM max
   const renderZoom = Math.min(OSM_MAX_ZOOM, zoom + 1);
-  const tileSW = latLngToTileXY(sw.lat, sw.lng, renderZoom);
-  const tileNE = latLngToTileXY(ne.lat, ne.lng, renderZoom);
+  const swTile = tileXYFloat(sw.lat, sw.lng, renderZoom);
+  const neTile = tileXYFloat(ne.lat, ne.lng, renderZoom);
 
-  const minTX = Math.max(0, Math.floor(tileSW.x));
-  const maxTX = Math.min((1 << renderZoom) - 1, Math.floor(tileNE.x));
-  const minTY = Math.max(0, Math.floor(tileSW.y));
-  const maxTY = Math.min((1 << renderZoom) - 1, Math.floor(tileNE.y));
+  // Tile grid: x increases east, y increases south. Use min/max on both axes.
+  const maxTile = (1 << renderZoom) - 1;
+  const minTX = Math.max(0, Math.floor(Math.min(swTile.x, neTile.x)));
+  const maxTX = Math.min(maxTile, Math.floor(Math.max(swTile.x, neTile.x)));
+  const minTY = Math.max(0, Math.floor(Math.min(swTile.y, neTile.y)));
+  const maxTY = Math.min(maxTile, Math.floor(Math.max(swTile.y, neTile.y)));
 
   const cols = maxTX - minTX + 1;
   const rows = maxTY - minTY + 1;
@@ -5346,8 +5353,6 @@ async function renderMapToCanvas(bounds, zoom) {
   canvas.height = canvasH;
   const ctx = canvas.getContext("2d");
 
-  // Load all tiles in parallel batches
-  const BATCH_SIZE = 8;
   const tiles = [];
   for (let ty = minTY; ty <= maxTY; ty++) {
     for (let tx = minTX; tx <= maxTX; tx++) {
@@ -5355,6 +5360,7 @@ async function renderMapToCanvas(bounds, zoom) {
     }
   }
 
+  const BATCH_SIZE = 8;
   for (let i = 0; i < tiles.length; i += BATCH_SIZE) {
     const batch = tiles.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
@@ -5368,21 +5374,24 @@ async function renderMapToCanvas(bounds, zoom) {
     });
   }
 
-  // Calculate the pixel region within the canvas that exactly covers the bounds
-  const topLeft = latLngToTileXY(ne.lat, sw.lng, renderZoom);
-  const bottomRight = latLngToTileXY(sw.lat, ne.lng, renderZoom);
+  // Compute exact pixel sub-region covering the bounds, using float tile coords
+  const nwFloat = tileXYFloat(ne.lat, sw.lng, renderZoom);
+  const seFloat = tileXYFloat(sw.lat, ne.lng, renderZoom);
 
-  const px1 = (topLeft.x - minTX) * TILE_SIZE;
-  const py1 = (topLeft.y - minTY) * TILE_SIZE;
-  const px2 = (bottomRight.x - minTX) * TILE_SIZE;
-  const py2 = (bottomRight.y - minTY) * TILE_SIZE;
+  const cropX = (nwFloat.x - minTX) * TILE_SIZE;
+  const cropY = (nwFloat.y - minTY) * TILE_SIZE;
+  const cropW = (seFloat.x - nwFloat.x) * TILE_SIZE;
+  const cropH = (seFloat.y - nwFloat.y) * TILE_SIZE;
 
-  const cropX = Math.max(0, Math.floor(px1));
-  const cropY = Math.max(0, Math.floor(py1));
-  const cropW = Math.min(canvasW - cropX, Math.ceil(px2 - px1));
-  const cropH = Math.min(canvasH - cropY, Math.ceil(py2 - py1));
-
-  return { canvas, crop: { x: cropX, y: cropY, w: cropW, h: cropH } };
+  return {
+    canvas,
+    crop: {
+      x: Math.max(0, Math.floor(cropX)),
+      y: Math.max(0, Math.floor(cropY)),
+      w: Math.min(canvasW - Math.floor(cropX), Math.ceil(cropW)),
+      h: Math.min(canvasH - Math.floor(cropY), Math.ceil(cropH)),
+    },
+  };
 }
 
 async function captureMapImageForGroundPlane() {

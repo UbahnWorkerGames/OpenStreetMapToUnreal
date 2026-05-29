@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.32 | 2026-05-29 15:20 +02:00 | Fixes tile Y-axis inversion in map PNG export (was producing degenerate crops).
 - 0.1.31 | 2026-05-29 15:14 +02:00 | Replaces staticmap.openstreetmap.de with canvas-based tile rendering for map PNG export (tile server was down).
 - 0.1.30 | 2026-05-29 15:11 +02:00 | Includes prop Type in actor labels for Outliner identification; adds Map PNG download button for manual ground plane texturing.
 - 0.1.29 | 2026-05-29 16:30 +02:00 | Fixes building/tree label collision by always including OsmId in actor labels; adds prefix cleanup in main(); adds ground plane with static map texture under all elements; adds _unique_label() counter as collision safety net; 10s timeout on map image fetch.
