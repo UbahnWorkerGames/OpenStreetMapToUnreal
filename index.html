@@ -194,6 +194,35 @@
         color: var(--muted);
       }
 
+      .spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--muted);
+        border-top-color: #16a34a;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      #status.loading { color: #16a34a; }
+
+      .btn-clear.cancel-btn {
+        background: #dc2626;
+        border-color: #b91c1c;
+        color: #fff;
+        display: none;
+      }
+
+      .btn-clear.cancel-btn.visible {
+        display: inline-block;
+      }
+
       .btn-clear {
         font: inherit;
         font-size: 0.8rem;
@@ -459,6 +488,7 @@
       <div class="row" style="margin-top: 10px">
         <button type="button" class="btn-clear" id="btn-area-select" title="Rechteck auf der Karte ziehen">Bereich</button>
         <button type="button" class="btn-clear btn-primary" id="btn-area-load" title="OSM-Daten im markierten Bereich laden">Bereich laden</button>
+        <button type="button" class="btn-clear cancel-btn" id="btn-area-cancel" title="Ladevorgang abbrechen">Abbrechen</button>
         <button type="button" class="btn-clear" id="btn-area-reset-layers" title="Alle Layer abwählen, Bereich behalten">Zurücksetzen</button>
       </div>
       <div class="row" style="margin-top: 6px">

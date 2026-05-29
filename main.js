@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.27";
-const APP_VERSION_DATE = "2026-05-29 15:10 +02:00";
+const APP_VERSION = "0.1.28";
+const APP_VERSION_DATE = "2026-05-29 15:45 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -1220,8 +1220,38 @@ function escapeHtml(s) {
 function setStatus(text, isError = false) {
   const el = document.getElementById("status");
   if (!el) return;
-  el.textContent = text;
+  el.innerHTML = text;
+  el.className = "";
   el.style.color = isError ? "#c5221f" : "var(--muted)";
+}
+
+function setStatusLoading(text) {
+  const el = document.getElementById("status");
+  if (!el) return;
+  el.innerHTML = `<span class="spinner"></span>${text}`;
+  el.className = "loading";
+  el.style.color = "";
+}
+
+let areaLoadAbortController = null;
+
+function cancelAreaLoad() {
+  if (areaLoadAbortController) {
+    areaLoadAbortController.abort();
+    areaLoadAbortController = null;
+  }
+  hideCancelButton();
+  setStatus("Abgebrochen.", true);
+}
+
+function showCancelButton() {
+  const btn = document.getElementById("btn-area-cancel");
+  if (btn) btn.classList.add("visible");
+}
+
+function hideCancelButton() {
+  const btn = document.getElementById("btn-area-cancel");
+  if (btn) btn.classList.remove("visible");
 }
 
 function setDirectionText(text) {
@@ -5478,6 +5508,9 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     return false;
   }
 
+  // Cancel any in-flight request
+  cancelAreaLoad();
+
   try {
     const selectedCategories = getSelectedAreaCategories();
     if (!selectedCategories.length) {
@@ -5508,22 +5541,168 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     }
 
     const layerLabels = selectedCategories.map((category) => AREA_LAYER_LABELS[category]).join(", ");
-    setStatus(`Lade Bereichsdaten von Overpass (${areaKm2.toFixed(2)} km², ${layerLabels}) ...`);
-    const response = await fetch(OVERPASS_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: buildAreaOverpassQuery(bounds, selectedCategories),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    showCancelButton();
+    setStatusLoading(`Lade Bereichsdaten von Overpass (${areaKm2.toFixed(2)} km², ${layerLabels})...`);
 
-    const data = await response.json();
-    if (!data || typeof data !== "object" || !Array.isArray(data.elements)) {
-      throw new Error("Antwort ohne elements");
+    const query = buildAreaOverpassQuery(bounds, selectedCategories);
+    let data = null;
+
+    // Retry up to 2 times on timeout/504
+    for (let attempt = 0; attempt < 3; attempt++) {
+      areaLoadAbortController = new AbortController();
+      const timeoutId = setTimeout(() => areaLoadAbortController.abort(), 95000);
+
+      try {
+        const msg = attempt > 0
+          ? `Overpass-Anfrage (Versuch ${attempt + 1}/3)...`
+          : `Warte auf Overpass (${areaKm2.toFixed(1)} km²)...`;
+        setStatusLoading(msg);
+
+        const response = await fetch(OVERPASS_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          body: query,
+          signal: areaLoadAbortController.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          if (response.status === 504 && attempt < 2) {
+            setStatusLoading(`Overpass timeout (504) — neuer Versuch in 3s...`);
+            await new Promise((r) => setTimeout(r, 3000));
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        setStatusLoading("Empfange Daten...");
+        const raw = await response.json();
+        if (!raw || typeof raw !== "object" || !Array.isArray(raw.elements)) {
+          throw new Error("Antwort ohne elements");
+        }
+        data = raw;
+        break;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === "AbortError") {
+          hideCancelButton();
+          setStatus("Anfrage abgebrochen.", true);
+          return false;
+        }
+        if (attempt < 2) {
+          setStatusLoading(`Fehler: ${err.message} — neuer Versuch in 3s...`);
+          await new Promise((r) => setTimeout(r, 3000));
+        } else {
+          throw err;
+        }
+      } finally {
+        areaLoadAbortController = null;
+      }
     }
 
+    if (!data) throw new Error("Keine Daten nach Wiederholungen.");
+
+    const elementCount = data.elements.length;
+    setStatusLoading(`Verarbeite ${elementCount.toLocaleString("de-DE")} Elemente...`);
+
+    // Process features asynchronously in chunks to keep UI responsive
     detectedAreaTransitLines = overpassTransitRouteLines(data);
-    areaFeatures = buildAreaFeatures(data, bounds);
+
+    // Build features in batches, yielding to the browser between batches
+    const BATCH_SIZE = 500;
+    const elements = data.elements || [];
+    const seenSignatures = new Set();
+    const wayContextBounds = expandBoundsByMeters(bounds, AREA_WAY_CONTEXT_MARGIN_M);
+    const features = [];
+    const transitFeatures = [];
+
+    for (let batchStart = 0; batchStart < elements.length; batchStart += BATCH_SIZE) {
+      // Check for cancellation
+      if (areaLoadAbortController?.signal?.aborted) {
+        hideCancelButton();
+        setStatus("Verarbeitung abgebrochen.", true);
+        return false;
+      }
+
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, elements.length);
+      const batch = elements.slice(batchStart, batchEnd);
+
+      for (const el of batch) {
+        if (el.type === "node" && Number.isFinite(el.lat) && Number.isFinite(el.lon)) {
+          if (!bounds.contains(L.latLng(el.lat, el.lon))) continue;
+          const category = classifyAreaNode(el.tags || {});
+          if (!category) continue;
+          const tags = el.tags || {};
+          const name = areaGroupName(tags, category, el.id);
+          const key = normalizeAreaKey(`${category}_${name}_${el.id}`);
+          if (!key) throw new Error(`Node ${el.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
+          features.push({
+            id: el.id, key, category, shape: "point", closed: false, name,
+            sourceIds: [el.id], tags,
+            rawGeometry: [[el.lat, el.lon]],
+            clippedGeometry: [[el.lat, el.lon]],
+            simplifiedGeometry: [[el.lat, el.lon]],
+            controlGeometry: [[el.lat, el.lon]],
+            segment10mGeometry: [[el.lat, el.lon]],
+          });
+          continue;
+        }
+
+        if (el.type !== "way" || !Array.isArray(el.geometry) || el.geometry.length < 2) continue;
+        const category = classifyAreaWay(el.tags || {});
+        if (!category) continue;
+
+        const rawGeometry = normalizeOverpassGeometry(el.geometry);
+        if (rawGeometry.length < 2) continue;
+        if (AREA_FULL_WAY_SPLINE_CATEGORIES.has(category) && !areaFeatureIntersectsBounds({ rawGeometry }, bounds)) {
+          continue;
+        }
+        const clippedParts = AREA_FULL_WAY_SPLINE_CATEGORIES.has(category)
+          ? clipPolylineToBounds(rawGeometry, wayContextBounds)
+          : clipPolylineToBounds(rawGeometry, bounds);
+        for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
+          const clippedGeometry = clippedParts[partIndex];
+          const tags = el.tags || {};
+          const roundabout = isRoundaboutTags(tags);
+          const closed = isClosedPolyline(clippedGeometry);
+          const simplifiedGeometry = roundabout && closed
+            ? clippedGeometry
+            : simplifyPolyline(clippedGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+          const segment10mGeometry = resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M);
+          const signature = areaGeometrySignature(category, segment10mGeometry);
+          if (seenSignatures.has(signature)) continue;
+          seenSignatures.add(signature);
+          const name = areaGroupName(tags, category, el.id);
+          const key = normalizeAreaKey(`${category}_${name}_${el.id}_${partIndex}`);
+          if (!key) throw new Error(`Way ${el.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
+          features.push({
+            id: el.id, key, category,
+            shape: roundabout ? "roundabout" : "line", closed, name,
+            sourceIds: [el.id], tags,
+            rawGeometry, clippedGeometry, simplifiedGeometry,
+            controlGeometry: simplifiedGeometry, segment10mGeometry,
+          });
+        }
+      }
+
+      // Yield to browser every batch
+      const pct = Math.round((batchEnd / elements.length) * 100);
+      setStatusLoading(`Verarbeite ${elementCount.toLocaleString("de-DE")} Elemente (${pct}%)...`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    // Add transit relation features
+    transitFeatures.push(...buildAreaTransitRelationFeatures(data, bounds, seenSignatures));
+    features.push(...transitFeatures);
+
+    const pointFeatures = features.filter((feature) => feature.shape === "point");
+    const lineFeatures = features.filter((feature) => feature.shape !== "point");
+    setStatusLoading(`Stitche und merge Geometrien...`);
+
+    areaFeatures = [...stitchConnectedAreaFeatures(mergeAreaCenterlines(lineFeatures)), ...pointFeatures];
     areaCache = { key: cacheKey, bounds, features: areaFeatures, transitLines: detectedAreaTransitLines };
+
+    hideCancelButton();
     if (!areaFeatures.length && !detectedAreaTransitLines.length) {
       areaRawLayer.clearLayers();
       areaProcessedLayer.clearLayers();
@@ -5535,6 +5714,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     else renderAreaTransitLinesOnlyStatus();
     return true;
   } catch (error) {
+    hideCancelButton();
     setStatus(`Bereichsimport fehlgeschlagen: ${error.message}`, true);
     return false;
   }
@@ -5742,6 +5922,7 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
   setAreaSelectMode(!areaSelectMode);
 });
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
+document.getElementById("btn-area-cancel")?.addEventListener("click", cancelAreaLoad);
 document.getElementById("btn-area-reset-layers")?.addEventListener("click", resetAreaLayersKeepBounds);
 document.getElementById("btn-area-save-selection")?.addEventListener("click", saveCurrentAreaSelection);
 document.getElementById("btn-area-delete-selection")?.addEventListener("click", deleteSavedAreaSelection);
