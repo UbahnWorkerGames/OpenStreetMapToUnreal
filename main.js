@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.16";
-const APP_VERSION_DATE = "2026-05-29 12:35 +02:00";
+const APP_VERSION = "0.1.17";
+const APP_VERSION_DATE = "2026-05-29 12:49 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -269,8 +269,8 @@ const AREA_DRAW_RAW_GEOMETRY = false;
 const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
 const AREA_ROAD_CENTERLINE_MAX_DISTANCE_M = 45;
-const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.35;
-const AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M = 6;
+const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.2;
+const AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M = 18;
 const AREA_STITCH_MAX_DISTANCE_M = 18;
 const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
 const AREA_LARGE_REQUEST_KM2 = 25;
@@ -1586,7 +1586,7 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
 (
 ${clauses}${relationClauses ? `\n${relationClauses}` : ""}
 );
-out geom(${bbox});`;
+out geom;`;
 }
 
 function outCode(lat, lon, bounds) {
@@ -1737,7 +1737,7 @@ function isDirectionalRoadCategory(category) {
 
 function areaExportGroupKey(feature) {
   const name = feature.name || feature.tags?.name || feature.tags?.ref || feature.tags?.highway || feature.key;
-  return normalizeAreaKey(`${feature.category}_${areaFeatureExportClass(feature)}_${name}`).toLowerCase();
+  return normalizeAreaKey(`${feature.category}_${name}`).toLowerCase();
 }
 
 function averagePointDistanceM(trackA, trackB) {
@@ -1845,6 +1845,13 @@ function normalizeAreaSplineFeaturesForExport(features) {
     result.push(...removeDuplicateAreaFeatures(stitched));
   }
   return result;
+}
+
+function areaFeatureIntersectsBounds(feature, bounds) {
+  if (!bounds?.isValid?.()) return true;
+  const geometry = feature.rawGeometry || feature.controlGeometry || [];
+  if (geometry.some((point) => bounds.contains(L.latLng(point[0], point[1])))) return true;
+  return clipPolylineToBounds(geometry, bounds).length > 0;
 }
 
 function canStitchAreaFeatures(a, b) {
@@ -1976,6 +1983,9 @@ function buildAreaFeatures(data, bounds) {
 
     const rawGeometry = normalizeOverpassGeometry(el.geometry);
     if (rawGeometry.length < 2) continue;
+    if (AREA_FULL_WAY_SPLINE_CATEGORIES.has(category) && !areaFeatureIntersectsBounds({ rawGeometry }, bounds)) {
+      continue;
+    }
     const clippedParts = AREA_FULL_WAY_SPLINE_CATEGORIES.has(category)
       ? [rawGeometry]
       : clipPolylineToBounds(rawGeometry, bounds);
