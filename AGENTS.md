@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.33 | 2026-05-29 19:21 +02:00 | Adds Esri World Imagery satellite layer toggle; export adapts to active layer (OSM or Esri tiles).
 - 0.1.32 | 2026-05-29 15:20 +02:00 | Fixes tile Y-axis inversion in map PNG export (was producing degenerate crops).
 - 0.1.31 | 2026-05-29 15:14 +02:00 | Replaces staticmap.openstreetmap.de with canvas-based tile rendering for map PNG export (tile server was down).
 - 0.1.30 | 2026-05-29 15:11 +02:00 | Includes prop Type in actor labels for Outliner identification; adds Map PNG download button for manual ground plane texturing.

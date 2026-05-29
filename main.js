@@ -16,29 +16,57 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.29";
-const APP_VERSION_DATE = "2026-05-29 16:30 +02:00";
+const APP_VERSION = "0.1.33";
+const APP_VERSION_DATE = "2026-05-29 19:21 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
 const map = L.map("map", { zoomControl: true, minZoom: 10, maxZoom: 18 })
   .setView([52.52, 13.405], 12);
 
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png", {
+// Map-Layer (Carto light + ÖPNV overlay)
+const cartoLayer = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png", {
   attribution:
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · ' +
     '<a href="https://carto.com/attributions">CARTO</a>',
   subdomains: "abcd",
   maxZoom: 20,
-}).addTo(map);
+});
 
-L.tileLayer("https://tile.memomaps.de/tilegen/{z}/{x}/{y}.png", {
+const opnvLayer = L.tileLayer("https://tile.memomaps.de/tilegen/{z}/{x}/{y}.png", {
   attribution:
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · ' +
     '<a href="https://öpnvkarte.de/">ÖPNVKarte</a>',
   maxZoom: 18,
   opacity: 0.35,
-}).addTo(map);
+});
+
+// Esri World Imagery Satellite-Layer
+const esriLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+  attribution: "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+  maxZoom: 19,
+});
+
+// Start: Map mode (Carto + ÖPNV)
+cartoLayer.addTo(map);
+opnvLayer.addTo(map);
+let currentBaseLayer = "map"; // "map" | "sat"
+
+function toggleBaseLayer() {
+  if (currentBaseLayer === "map") {
+    map.removeLayer(cartoLayer);
+    map.removeLayer(opnvLayer);
+    esriLayer.addTo(map);
+    currentBaseLayer = "sat";
+  } else {
+    map.removeLayer(esriLayer);
+    cartoLayer.addTo(map);
+    opnvLayer.addTo(map);
+    currentBaseLayer = "map";
+  }
+  document.getElementById("btn-toggle-layer").textContent =
+    currentBaseLayer === "map" ? "Map" : "Sat";
+}
 
 L.control.scale({ metric: true, imperial: false }).addTo(map);
 
@@ -5311,11 +5339,17 @@ function tileXYFloat(lat, lng, zoom) {
 function latLngToTileXY(lat, lng, zoom) {
   const t = tileXYFloat(lat, lng, zoom);
   return { x: Math.floor(t.x), y: Math.floor(t.y), fx: t.x - Math.floor(t.x), fy: t.y - Math.floor(t.y) };
-}
+// ─── Map Tile Export (canvas-based, für Ground-Plane / Map PNG) ─────────────
 
-const MAP_TILE_URL = "https://tile.openstreetmap.org";
 const TILE_SIZE = 256;
-const OSM_MAX_ZOOM = 19;
+const EXPORT_MAX_ZOOM = 19; // both OSM and Esri support 19
+
+function getExportTileUrl(z, x, y) {
+  if (currentBaseLayer === "sat") {
+    return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+  }
+  return `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+}
 
 async function fetchTileAsImage(z, x, y) {
   return new Promise((resolve, reject) => {
@@ -5323,7 +5357,7 @@ async function fetchTileAsImage(z, x, y) {
     img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(`tile ${z}/${x}/${y} failed`));
-    img.src = `${MAP_TILE_URL}/${z}/${x}/${y}.png`;
+    img.src = getExportTileUrl(z, x, y);
   });
 }
 
@@ -5332,7 +5366,7 @@ async function renderMapToCanvas(bounds, zoom) {
   const ne = bounds.getNorthEast();
 
   // Use zoom+1 for higher res, clamped to OSM max
-  const renderZoom = Math.min(OSM_MAX_ZOOM, zoom + 1);
+  const renderZoom = Math.min(EXPORT_MAX_ZOOM, zoom + 1);
   const swTile = tileXYFloat(sw.lat, sw.lng, renderZoom);
   const neTile = tileXYFloat(ne.lat, ne.lng, renderZoom);
 
@@ -6228,6 +6262,7 @@ document.getElementById("btn-export-props")?.addEventListener("click", exportAre
 document.getElementById("btn-export-heightmap")?.addEventListener("click", exportHeightmap);
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
 document.getElementById("btn-export-map-png")?.addEventListener("click", exportMapPng);
+document.getElementById("btn-toggle-layer")?.addEventListener("click", toggleBaseLayer);
 document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
 document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
 document.getElementById("btn-python-download")?.addEventListener("click", () => {
