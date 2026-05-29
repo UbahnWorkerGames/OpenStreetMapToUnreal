@@ -4038,7 +4038,7 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
     ...(bpPaths || {}),
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
-  const groundImageLiteral = groundPlaneImage ? JSON.stringify(JSON.stringify(groundPlaneImage)) : "\"\"";
+  const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
   return `import json
 import re
 import os
@@ -4053,7 +4053,7 @@ TREES = json.loads(${treeJsonLiteral})
 PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
-GROUND_PLANE_IMAGE_B64 = json.loads(${groundImageLiteral})
+GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
