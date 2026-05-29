@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.26";
-const APP_VERSION_DATE = "2026-05-29 14:49 +02:00";
+const APP_VERSION = "0.1.27";
+const APP_VERSION_DATE = "2026-05-29 15:10 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -4162,6 +4162,26 @@ def point_to_local_vector(point, origin):
     return unreal.Vector(world.x - origin.x, world.y - origin.y, world.z - origin.z)
 
 
+def _nudge_spline_point(spline_component, index):
+    """Work around a UE5 editor bug where spline geometry written via Python
+    does not register for PCG / rendering until a point is touched manually.
+    Read the world location of point *index* and write it back unchanged,
+    which triggers the same internal invalidation as a manual drag."""
+    try:
+        location = spline_world_location_at_point(spline_component, index)
+        if hasattr(spline_component, "set_location_at_spline_point"):
+            spline_component.set_location_at_spline_point(
+                index, location, unreal.SplineCoordinateSpace.WORLD, True
+            )
+        elif hasattr(spline_component, "set_location_at_spline_input_key"):
+            spline_component.set_location_at_spline_input_key(
+                float(index), location, unreal.SplineCoordinateSpace.WORLD, True
+            )
+        spline_component.update_spline()
+    except Exception:
+        pass  # best-effort; geometry will still be correct, just may need a manual touch
+
+
 def require_spline(row, index):
     if not isinstance(row, dict):
         fail(f"Spline {index} must be an object")
@@ -4240,6 +4260,9 @@ def write_spline_points(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     call_method_if_present(spline_component, "post_edit_change")
+    # UE5 editor bug: spline geometry may not register until a point is touched.
+    # Simulate a manual nudge to force proper invalidation for PCG and rendering.
+    _nudge_spline_point(spline_component, 0)
 
 
 def configure_spline_component(spline_component, row, actor_location):
@@ -4389,7 +4412,7 @@ def create_prop_actor(actor_class, row):
         float(row.get("Z", 0.0)) + WORLD_OFFSET_CM.z,
     )
     yaw = float(row.get("Direction") or 0.0)
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, unreal.Rotator(0.0, 0.0, yaw))
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(actor_class, location, unreal.Rotator(0.0, yaw, 0.0))
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)

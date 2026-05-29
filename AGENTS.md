@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.27 | 2026-05-29 15:10 +02:00 | Fixes prop rotation (Rotator yaw→roll parameter swap) and spline collapse via programmatic nudge workaround for UE5 editor bug.
 - 0.1.26 | 2026-05-29 14:49 +02:00 | Keeps imported city street splines as editor-overridden local points and disables construction-script input that collapsed BP splines.
 - 0.1.25 | 2026-05-29 14:36 +02:00 | Collapses named road exports to one averaged road axis and keeps spline points as construction-script input after import.
 - 0.1.24 | 2026-05-29 14:04 +02:00 | Mirrors the area coordinate transform downward by negating north.
