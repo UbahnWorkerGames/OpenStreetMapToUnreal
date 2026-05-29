@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.14";
-const APP_VERSION_DATE = "2026-05-29 11:58 +02:00";
+const APP_VERSION = "0.1.15";
+const APP_VERSION_DATE = "2026-05-29 12:18 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -268,6 +268,8 @@ const AREA_DEDUPE_DECIMALS = 5;
 const AREA_DRAW_RAW_GEOMETRY = false;
 const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
+const AREA_ROAD_CENTERLINE_MAX_DISTANCE_M = 45;
+const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.35;
 const AREA_STITCH_MAX_DISTANCE_M = 18;
 const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
 const AREA_LARGE_REQUEST_KM2 = 25;
@@ -1728,6 +1730,10 @@ function areaCenterlineGroupKey(category, name) {
   return normalizeAreaKey(`${category}_${name}`).toLowerCase();
 }
 
+function isDirectionalRoadCategory(category) {
+  return ["motorway", "major_road", "city_road", "service", "cycleway", "footway", "bus"].includes(category);
+}
+
 function averagePointDistanceM(trackA, trackB) {
   const n = Math.max(2, Math.min(24, Math.round(Math.min(trackA.length, trackB.length))));
   const a = resamplePolyline(trackA, n);
@@ -1744,8 +1750,14 @@ function shouldMergeAreaCenterline(a, b) {
   const lenB = polylineLengthM(b.segment10mGeometry);
   if (lenA <= 0 || lenB <= 0) return false;
   const lengthRatio = Math.min(lenA, lenB) / Math.max(lenA, lenB);
-  if (lengthRatio < AREA_CENTERLINE_LENGTH_RATIO) return false;
-  return averagePointDistanceM(a.segment10mGeometry, b.segment10mGeometry) <= AREA_CENTERLINE_MAX_DISTANCE_M;
+  const minLengthRatio = isDirectionalRoadCategory(a.category)
+    ? AREA_ROAD_CENTERLINE_LENGTH_RATIO
+    : AREA_CENTERLINE_LENGTH_RATIO;
+  if (lengthRatio < minLengthRatio) return false;
+  const maxDistance = isDirectionalRoadCategory(a.category)
+    ? AREA_ROAD_CENTERLINE_MAX_DISTANCE_M
+    : AREA_CENTERLINE_MAX_DISTANCE_M;
+  return averagePointDistanceM(a.segment10mGeometry, b.segment10mGeometry) <= maxDistance;
 }
 
 function mergeAreaCenterlinePair(a, b) {
@@ -2973,7 +2985,7 @@ function selectedAreaSplineFeaturesForExport() {
       Array.isArray(feature.controlGeometry) &&
       feature.controlGeometry.length >= 2,
   );
-  return stitchConnectedAreaFeatures(selected, AREA_EXPORT_STITCH_MAX_DISTANCE_M);
+  return stitchConnectedAreaFeatures(mergeAreaCenterlines(selected), AREA_EXPORT_STITCH_MAX_DISTANCE_M);
 }
 
 function buildAreaPcgSplines() {
@@ -3069,9 +3081,11 @@ function buildAreaExportTransform(selected) {
     originWgs84: { lat: lat0, lon: lon0 },
     originMode: "fixed_berlin_world_origin",
     toPointCm([lat, lon]) {
+      const eastCm = +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1));
+      const northCm = +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1));
       return {
-        X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
-        Y: +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
+        X: northCm,
+        Y: eastCm,
         Z: 0,
       };
     },
@@ -3816,7 +3830,7 @@ def bp_class_for_row(row, cache):
 
 
 def sanitize_label_part(value):
-    sanitized = re.sub(r"[^A-Za-z0-9_]+", "_", str(value)).strip("_")
+    sanitized = re.sub(r"[^\w]+", "_", str(value), flags=re.UNICODE).strip("_")
     return sanitized or "Unnamed"
 
 
@@ -3824,9 +3838,9 @@ def road_kind_label(row):
     row_type = str(row.get("Type", "street"))
     osm_class = str(row.get("OsmClass", ""))
     if row_type == "major_road":
-        return "Hauptstrasse"
+        return "Hauptstraße"
     if row_type == "city_road":
-        return "Stadtstrasse"
+        return "Stadtstraße"
     if row_type == "service":
         return "Service"
     if row_type == "motorway":
@@ -3834,16 +3848,16 @@ def road_kind_label(row):
     if row_type == "cycleway":
         return "Radweg"
     if row_type == "footway":
-        return "Fussweg"
+        return "Fußweg"
     if row_type == "rail_tram":
         return "Tram"
     if row_type == "rail_train":
         return "Bahn"
     if row_type == "rail_subway":
-        return "UBahn"
+        return "U-Bahn"
     if row_type == "bus":
         return "Bus"
-    return sanitize_label_part(osm_class or row_type or "Strasse")
+    return sanitize_label_part(osm_class or row_type or "Straße")
 
 
 def actor_label_for_spline(row):

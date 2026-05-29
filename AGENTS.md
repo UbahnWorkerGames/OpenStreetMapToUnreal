@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.15 | 2026-05-29 12:18 +02:00 | Preserves umlauts in actor labels, merges same-road directional carriageways before export, and maps area coordinates as X=north/Y=east.
 - 0.1.14 | 2026-05-29 11:58 +02:00 | Names street actors as BP_<road kind>_<street name>, exports full intersecting road ways, and avoids the collapsing construction-input mode.
 - 0.1.13 | 2026-05-29 11:42 +02:00 | Stitches visible spline exports more aggressively and preserves imported spline points for later Blueprint construction reruns.
 - 0.1.12 | 2026-05-29 11:27 +02:00 | Applies street actor metadata before final spline writes so payload changes cannot reset generated spline geometry.
