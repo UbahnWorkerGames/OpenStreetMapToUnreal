@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.37 | 2026-05-29 20:35 +02:00 | Fixes Overpass query to include `out body; >; out geom;` — was missing tags (only had geom).
 - 0.1.36 | 2026-05-29 20:29 +02:00 | "Alle →" button in options modal copies first non-empty BP path to all fields.
 - 0.1.35 | 2026-05-29 20:26 +02:00 | Tooltip now shows ALL OSM tags (priority-sorted first, rest alphabetically) — no more missing data.
 - 0.1.34 | 2026-05-29 20:18 +02:00 | Rich hover tooltips on all area features showing all OSM tags (species, height, lanes, address, etc.).

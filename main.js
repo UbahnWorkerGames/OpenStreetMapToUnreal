@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.36";
-const APP_VERSION_DATE = "2026-05-29 20:29 +02:00";
+const APP_VERSION = "0.1.37";
+const APP_VERSION_DATE = "2026-05-29 20:35 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ const ELEVATION_API_URL = "https://api.open-meteo.com/v1/elevation";
 const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
-const AREA_CACHE_STORAGE_KEY = "uemap.areaCache.v1";
+const AREA_CACHE_STORAGE_KEY = "uemap.areaCache.v2";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
 const AREA_WORLD_ORIGIN_WGS84 = { lat: 52.52, lon: 13.405 };
 const DEFAULT_AREA_BP_PATHS = {
@@ -1660,6 +1660,8 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
 (
 ${clauses}${relationClauses ? `\n${relationClauses}` : ""}
 );
+out body;
+>;
 out geom;`;
 }
 
