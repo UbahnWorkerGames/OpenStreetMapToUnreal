@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.7";
-const APP_VERSION_DATE = "2026-05-29 10:34 +02:00";
+const APP_VERSION = "0.1.8";
+const APP_VERSION_DATE = "2026-05-29 10:47 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3850,15 +3850,6 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
-def set_spline_component_world_origin(spline_component, actor_location):
-    relative_location = unreal.Vector(-actor_location.x, -actor_location.y, -actor_location.z)
-    if not set_editor_property_if_present(spline_component, "relative_location", relative_location):
-        fail(
-            "SplineComponent does not expose relative_location. "
-            "Cannot keep generated spline coordinates in world space while moving the actor."
-        )
-
-
 def set_tags(actor, tags):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
@@ -3879,13 +3870,12 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def configure_spline_component(spline_component, row, actor_location):
+def configure_spline_component(spline_component, row):
     set_editor_property_if_present(spline_component, "override_construction_script", False)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
-    set_spline_component_world_origin(spline_component, actor_location)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -3896,9 +3886,33 @@ def configure_spline_component(spline_component, row, actor_location):
     spline_component.update_spline()
 
 
-def rerun_construction_scripts(actor):
-    if hasattr(actor, "rerun_construction_scripts"):
-        actor.rerun_construction_scripts()
+def spline_world_location_at_point(spline_component, index):
+    if hasattr(spline_component, "get_location_at_spline_point"):
+        return spline_component.get_location_at_spline_point(index, unreal.SplineCoordinateSpace.WORLD)
+    if hasattr(spline_component, "get_location_at_spline_input_key"):
+        return spline_component.get_location_at_spline_input_key(float(index), unreal.SplineCoordinateSpace.WORLD)
+    fail("SplineComponent does not expose a world-location getter for validation")
+
+
+def vector_distance(a, b):
+    dx = a.x - b.x
+    dy = a.y - b.y
+    dz = a.z - b.z
+    return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
+def validate_spline_not_collapsed(spline_component, row):
+    expected_start = point_to_vector(row["Points"][0])
+    expected_end = point_to_vector(row["Points"][-1])
+    expected_span = vector_distance(expected_start, expected_end)
+    actual_start = spline_world_location_at_point(spline_component, 0)
+    actual_end = spline_world_location_at_point(spline_component, len(row["Points"]) - 1)
+    actual_span = vector_distance(actual_start, actual_end)
+    if expected_span > 100.0 and actual_span < expected_span * 0.25:
+        fail(
+            f"Spline '{row.get('SplineKey')}' collapsed after configuration: "
+            f"expected end-to-end span {expected_span:.1f} cm, got {actual_span:.1f} cm"
+        )
 
 
 def set_actor_tags(actor, row):
@@ -3931,12 +3945,10 @@ def create_street_spline_actor(actor_class, row):
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)
+    spline_component = find_spline_component(actor)
+    configure_spline_component(spline_component, row)
+    validate_spline_not_collapsed(spline_component, row)
     set_actor_tags(actor, row)
-    spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row, actor_location)
-    rerun_construction_scripts(actor)
-    spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row, actor_location)
     return actor
 
 

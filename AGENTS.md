@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.8 | 2026-05-29 10:47 +02:00 | Writes generated street spline points in world space without component offset hacks and fails if a spline collapses.
 - 0.1.7 | 2026-05-29 10:34 +02:00 | Keeps generated spline point values in world space while placing street actors at their first point.
 - 0.1.6 | 2026-05-29 10:22 +02:00 | Uses a fixed Berlin area-export origin so separate sector imports align in one Unreal world.
 - 0.1.5 | 2026-05-29 10:21 +02:00 | Spawns street spline actors at their first point and stores generated spline points locally.
