@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.21";
-const APP_VERSION_DATE = "2026-05-29 13:45 +02:00";
+const APP_VERSION = "0.1.22";
+const APP_VERSION_DATE = "2026-05-29 13:54 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3211,7 +3211,7 @@ function buildAreaExportTransform(selected) {
       const eastCm = +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1));
       const northCm = +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1));
       return {
-        X: -northCm,
+        X: northCm,
         Y: eastCm,
         Z: 0,
       };
