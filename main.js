@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.35";
-const APP_VERSION_DATE = "2026-05-29 20:26 +02:00";
+const APP_VERSION = "0.1.36";
+const APP_VERSION_DATE = "2026-05-29 20:29 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -4789,6 +4789,26 @@ function initAreaBpPathInputs() {
   }
 }
 
+function applyFirstBpPathToAll() {
+  const kinds = Object.keys(DEFAULT_AREA_BP_PATHS);
+  // Find first non-empty input value
+  let sourceValue = null;
+  for (const kind of kinds) {
+    const input = document.getElementById(`${kind}-bp-path-input`);
+    if (!input) continue;
+    const val = input.value.trim();
+    if (val) { sourceValue = val; break; }
+  }
+  if (!sourceValue) return;
+  // Apply to all
+  for (const kind of kinds) {
+    const input = document.getElementById(`${kind}-bp-path-input`);
+    if (!input) continue;
+    input.value = sourceValue;
+    setStoredAreaBpPath(kind, sourceValue);
+  }
+}
+
 function buildBlueprintSetupPythonScript(bpPaths) {
   const pathsLiteral = JSON.stringify(JSON.stringify({
     ...DEFAULT_AREA_BP_PATHS,
@@ -6229,6 +6249,7 @@ document.getElementById("datatable-line-all")?.addEventListener("change", (event
   syncDatatableLineAllCheckbox();
 });
 initAreaBpPathInputs();
+document.getElementById("btn-bp-apply-all")?.addEventListener("click", applyFirstBpPathToAll);
 
 async function reloadCurrentFile() {
   const sourceFile = currentSourceFile;
