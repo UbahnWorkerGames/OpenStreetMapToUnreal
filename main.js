@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.4";
-const APP_VERSION_DATE = "2026-05-28 22:10 +02:00";
+const APP_VERSION = "0.1.5";
+const APP_VERSION_DATE = "2026-05-29 10:35 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3002,7 +3002,7 @@ function buildAreaPcgSplines() {
   return rows;
 }
 
-function buildAreaPythonSplineData() {
+function buildAreaPythonSplineData(transform = null) {
   const selected = areaFeatures.filter(
     (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
       areaLayerVisibility.get(feature.category) &&
@@ -3011,19 +3011,8 @@ function buildAreaPythonSplineData() {
   );
   if (!selected.length) return null;
 
-  const origin = selected[0].controlGeometry[0];
-  const [lat0, lon0] = origin;
-  const cosLat = Math.cos((lat0 * Math.PI) / 180);
-  const metersPerDegreeLat = 111320;
-  const metersPerDegreeLon = 111320 * cosLat;
-
-  function toPointCm([lat, lon]) {
-    return [
-      +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
-      +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1)),
-      0,
-    ];
-  }
+  const exportTransform = transform || buildAreaExportTransform(selected);
+  if (!exportTransform) return null;
 
   return selected.map((feature) => {
     if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
@@ -3039,7 +3028,10 @@ function buildAreaPythonSplineData() {
       bTunnel: areaTagBool(feature.tags.tunnel),
       OsmLayer: areaTagInt(feature.tags.layer),
       bClosed: Boolean(feature.closed || isClosedPolyline(feature.controlGeometry)),
-      Points: feature.controlGeometry.map(toPointCm),
+      Points: feature.controlGeometry.map((point) => {
+        const converted = exportTransform.toPointCm(point);
+        return [converted.X, converted.Y, converted.Z];
+      }),
     };
   });
 }
@@ -3268,7 +3260,7 @@ function buildAreaPythonExportPayload() {
   const transform = buildAreaExportTransform(selected);
   if (!transform) return null;
 
-  const splines = buildAreaPythonSplineData() || [];
+  const splines = buildAreaPythonSplineData(transform) || [];
   return {
     origin_wgs84: transform.originWgs84,
     splines: splines.filter((row) => AREA_SPLINE_CATEGORIES.has(row.Type)),
@@ -3836,6 +3828,11 @@ def point_to_vector(point):
     )
 
 
+def vector_to_local(point, origin):
+    world = point_to_vector(point)
+    return unreal.Vector(world.x - origin.x, world.y - origin.y, world.z - origin.z)
+
+
 def require_spline(row, index):
     if not isinstance(row, dict):
         fail(f"Spline {index} must be an object")
@@ -3887,12 +3884,12 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def configure_spline_component(spline_component, row):
+def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", False)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(vector_to_local(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -3901,6 +3898,11 @@ def configure_spline_component(spline_component, row):
     elif bool(row.get("bClosed", False)):
         fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
     spline_component.update_spline()
+
+
+def rerun_construction_scripts(actor):
+    if hasattr(actor, "rerun_construction_scripts"):
+        actor.rerun_construction_scripts()
 
 
 def set_actor_tags(actor, row):
@@ -3924,16 +3926,18 @@ def set_actor_tags(actor, row):
 def create_street_spline_actor(actor_class, row):
     label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
     destroy_existing_actor_with_label(label)
+    actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         actor_class,
-        unreal.Vector(0.0, 0.0, 0.0),
+        actor_location,
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)
     spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row)
+    configure_spline_component(spline_component, row, actor_location)
+    rerun_construction_scripts(actor)
     set_actor_tags(actor, row)
     return actor
 

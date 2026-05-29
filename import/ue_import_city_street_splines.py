@@ -154,10 +154,15 @@ def point_to_vector(row: dict) -> unreal.Vector:
     )
 
 
-def spawn_empty_actor(label: str) -> unreal.Actor:
+def row_to_local_vector(row: dict, origin: unreal.Vector) -> unreal.Vector:
+    world = point_to_vector(row)
+    return unreal.Vector(world.x - origin.x, world.y - origin.y, world.z - origin.z)
+
+
+def spawn_empty_actor(label: str, location: unreal.Vector) -> unreal.Actor:
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
         unreal.Actor,
-        unreal.Vector(0.0, 0.0, 0.0),
+        location,
         unreal.Rotator(0.0, 0.0, 0.0),
     )
     if actor is None:
@@ -187,13 +192,13 @@ def add_spline_component(actor: unreal.Actor):
     return component
 
 
-def configure_spline_component(spline_component, rows: list[dict]) -> None:
+def configure_spline_component(spline_component, rows: list[dict], actor_location: unreal.Vector) -> None:
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
 
     spline_component.clear_spline_points(False)
     for row in rows:
-        spline_component.add_spline_point(point_to_vector(row), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(row_to_local_vector(row, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
 
     for index in range(len(rows)):
         point_type = unreal.SplinePointType.LINEAR if UB_LINEAR_SPLINES else unreal.SplinePointType.CURVE
@@ -228,9 +233,10 @@ def set_actor_tags(actor: unreal.Actor, rows: list[dict]) -> None:
 def create_street_spline_actor(spline_key: str, rows: list[dict]) -> unreal.Actor:
     sorted_rows = validate_group(spline_key, rows)
     label = f"{UB_ACTOR_LABEL_PREFIX}_{sanitize_label_part(spline_key)}"
-    actor = spawn_empty_actor(label)
+    actor_location = point_to_vector(sorted_rows[0])
+    actor = spawn_empty_actor(label, actor_location)
     spline_component = add_spline_component(actor)
-    configure_spline_component(spline_component, sorted_rows)
+    configure_spline_component(spline_component, sorted_rows, actor_location)
     set_actor_tags(actor, sorted_rows)
     return actor
 
