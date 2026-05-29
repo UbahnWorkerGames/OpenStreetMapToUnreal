@@ -4382,7 +4382,9 @@ def create_street_spline_actor(actor_class, row):
 
 
 def create_building_actor(actor_class, row):
-    label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('BuildingKey', row.get('Name', 'Building')))}"
+    osm_id = sanitize_label_part(str(row.get("OsmId", "")))
+    name_part = sanitize_label_part(row.get("BuildingKey", row.get("Name", "Building")))
+    label = f"{BUILDING_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}"
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -4405,7 +4407,7 @@ def create_building_actor(actor_class, row):
         "OSM_BUILDING",
         "building",
         row.get("BuildingKey", ""),
-        row.get("OsmId", ""),
+        str(row.get("OsmId", "")),
         row.get("Name", ""),
         row.get("Type", ""),
         row.get("Address", ""),
@@ -4416,7 +4418,9 @@ def create_building_actor(actor_class, row):
 
 
 def create_tree_actor(actor_class, row):
-    label = f"{TREE_ACTOR_LABEL_PREFIX}_{sanitize_label_part(row.get('TreeKey', row.get('Name', 'Tree')))}"
+    osm_id = sanitize_label_part(str(row.get("OsmId", "")))
+    name_part = sanitize_label_part(row.get("TreeKey", row.get("Name", "Tree")))
+    label = f"{TREE_ACTOR_LABEL_PREFIX}_{name_part}_{osm_id}"
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -4480,6 +4484,10 @@ def create_prop_actor(actor_class, row):
 
 def main():
     bp_class_cache = {}
+    # Clean up previous imports so duplicate labels cannot accumulate
+    destroy_existing_actor_with_prefix(BUILDING_ACTOR_LABEL_PREFIX)
+    destroy_existing_actor_with_prefix(TREE_ACTOR_LABEL_PREFIX)
+    destroy_existing_actor_with_prefix(PROP_ACTOR_LABEL_PREFIX)
     point_count = 0
     rows = [require_spline(source_row, index) for index, source_row in enumerate(STREET_SPLINES)]
     rows = dedupe_spline_rows(rows)
