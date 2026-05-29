@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.24";
-const APP_VERSION_DATE = "2026-05-29 14:04 +02:00";
+const APP_VERSION = "0.1.25";
+const APP_VERSION_DATE = "2026-05-29 14:36 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -273,6 +273,8 @@ const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.2;
 const AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M = 18;
 const AREA_STITCH_MAX_DISTANCE_M = 18;
 const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
+const AREA_ROAD_AXIS_BIN_M = 25;
+const AREA_ROAD_AXIS_MIN_LENGTH_M = 80;
 const AREA_WAY_CONTEXT_MARGIN_M = 180;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
@@ -1861,6 +1863,99 @@ function removeDuplicateAreaFeatures(features) {
   return kept;
 }
 
+function areaLocalMeters(point, originLat) {
+  const m = mpd(originLat);
+  return { x: point[1] * m.lon, y: point[0] * m.lat };
+}
+
+function areaLatLonFromLocalMeters(point, originLat) {
+  const m = mpd(originLat);
+  return [point.y / m.lat, point.x / m.lon];
+}
+
+function roadAxisVector(points) {
+  const mean = points.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), { x: 0, y: 0 });
+  mean.x /= points.length;
+  mean.y /= points.length;
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  for (const point of points) {
+    const dx = point.x - mean.x;
+    const dy = point.y - mean.y;
+    xx += dx * dx;
+    xy += dx * dy;
+    yy += dy * dy;
+  }
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  return { axis: { x: Math.cos(angle), y: Math.sin(angle) }, mean };
+}
+
+function collapseAreaRoadGroupToAxis(features) {
+  if (features.length < 2) return features;
+  const namedFeatures = features.filter((feature) => feature.name);
+  if (namedFeatures.length < 2) return features;
+
+  const sourcePoints = namedFeatures.flatMap((feature) => feature.controlGeometry || []);
+  if (sourcePoints.length < 4) return features;
+
+  const originLat = sourcePoints.reduce((sum, point) => sum + point[0], 0) / sourcePoints.length;
+  const localPoints = sourcePoints.map((point) => areaLocalMeters(point, originLat));
+  const { axis, mean } = roadAxisVector(localPoints);
+  const normal = { x: -axis.y, y: axis.x };
+  const projected = localPoints.map((point) => {
+    const dx = point.x - mean.x;
+    const dy = point.y - mean.y;
+    return {
+      t: dx * axis.x + dy * axis.y,
+      n: dx * normal.x + dy * normal.y,
+    };
+  });
+  const minT = Math.min(...projected.map((point) => point.t));
+  const maxT = Math.max(...projected.map((point) => point.t));
+  if (maxT - minT < AREA_ROAD_AXIS_MIN_LENGTH_M) return features;
+
+  const bins = new Map();
+  for (const point of projected) {
+    const bin = Math.round((point.t - minT) / AREA_ROAD_AXIS_BIN_M);
+    const bucket = bins.get(bin) || { t: 0, n: 0, count: 0 };
+    bucket.t += point.t;
+    bucket.n += point.n;
+    bucket.count += 1;
+    bins.set(bin, bucket);
+  }
+
+  const axisGeometry = [...bins.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, bucket]) => {
+      const t = bucket.t / bucket.count;
+      const n = bucket.n / bucket.count;
+      return areaLatLonFromLocalMeters({
+        x: mean.x + axis.x * t + normal.x * n,
+        y: mean.y + axis.y * t + normal.y * n,
+      }, originLat);
+    });
+  if (axisGeometry.length < 2) return features;
+
+  const first = namedFeatures[0];
+  const simplifiedGeometry = simplifyPolyline(axisGeometry, AREA_SIMPLIFY_TOLERANCE_M);
+  const collapsed = {
+    ...first,
+    id: namedFeatures.map((feature) => feature.id).join("+"),
+    key: normalizeAreaKey(`${first.category}_${first.name}_axis`),
+    sourceIds: namedFeatures.flatMap((feature) => feature.sourceIds || [feature.id]),
+    clippedGeometry: axisGeometry,
+    simplifiedGeometry,
+    controlGeometry: simplifiedGeometry,
+    segment10mGeometry: resamplePolylineBySpacing(simplifiedGeometry, AREA_SEGMENT_SPACING_M),
+    mergedRoadAxis: true,
+    tags: { ...first.tags },
+  };
+
+  const retained = features.filter((feature) => !namedFeatures.includes(feature));
+  return [collapsed, ...retained];
+}
+
 function normalizeAreaSplineFeaturesForExport(features) {
   const groups = new Map();
   for (const feature of features) {
@@ -1875,7 +1970,11 @@ function normalizeAreaSplineFeaturesForExport(features) {
   for (const group of groups.values()) {
     const centered = mergeAreaCenterlines(group);
     const stitched = stitchConnectedAreaFeatures(centered, AREA_EXPORT_STITCH_MAX_DISTANCE_M);
-    result.push(...removeDuplicateAreaFeatures(stitched).map(normalizeAreaFeatureDirection));
+    const deduped = removeDuplicateAreaFeatures(stitched);
+    const collapsed = isDirectionalRoadCategory(group[0]?.category)
+      ? collapseAreaRoadGroupToAxis(deduped)
+      : deduped;
+    result.push(...collapsed.map(normalizeAreaFeatureDirection));
   }
   return result;
 }
@@ -4130,7 +4229,7 @@ def write_spline_points(spline_component, row, actor_location):
 
 def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     write_spline_points(spline_component, row, actor_location)
 
 
