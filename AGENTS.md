@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.29 | 2026-05-29 16:30 +02:00 | Fixes building/tree label collision by always including OsmId in actor labels; adds prefix cleanup in main(); adds ground plane with static map texture under all elements.
 - 0.1.28 | 2026-05-29 15:45 +02:00 | Overpass UX: spinner, cancel button, 95s timeout, auto-retry on 504, percentage progress, async batch processing to prevent browser freeze.
 - 0.1.27 | 2026-05-29 15:10 +02:00 | Fixes prop rotation (Rotator yaw→roll parameter swap) and spline collapse via programmatic nudge workaround for UE5 editor bug.
 - 0.1.26 | 2026-05-29 14:49 +02:00 | Keeps imported city street splines as editor-overridden local points and disables construction-script input that collapsed BP splines.

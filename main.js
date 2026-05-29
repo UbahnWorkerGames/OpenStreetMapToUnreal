@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.28";
-const APP_VERSION_DATE = "2026-05-29 15:45 +02:00";
+const APP_VERSION = "0.1.29";
+const APP_VERSION_DATE = "2026-05-29 16:30 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
