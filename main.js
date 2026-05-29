@@ -4291,11 +4291,11 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def write_spline_points(spline_component, row):
+def write_spline_points(spline_component, row, actor_location):
     call_method_if_present(spline_component, "modify")
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.WORLD, False)
+        spline_component.add_spline_point(point_to_local_vector(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -4307,9 +4307,9 @@ def write_spline_points(spline_component, row):
     call_method_if_present(spline_component, "post_edit_change")
 
 
-def configure_spline_component(spline_component, row):
+def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
-    write_spline_points(spline_component, row)
+    write_spline_points(spline_component, row, actor_location)
 
 
 def spline_world_location_at_point(spline_component, index):
@@ -4373,7 +4373,7 @@ def create_street_spline_actor(actor_class, row):
     actor.set_actor_label(label)
     set_actor_tags(actor, row)
     spline_component = find_spline_component(actor)
-    configure_spline_component(spline_component, row)
+    configure_spline_component(spline_component, row, actor_location)
     validate_spline_not_collapsed(spline_component, row)
     # Let the Blueprint construction script build visual geometry from spline data
     actor.rerun_construction_scripts()
