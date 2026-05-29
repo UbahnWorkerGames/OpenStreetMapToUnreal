@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.11";
-const APP_VERSION_DATE = "2026-05-29 11:18 +02:00";
+const APP_VERSION = "0.1.12";
+const APP_VERSION_DATE = "2026-05-29 11:27 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3950,10 +3950,10 @@ def create_street_spline_actor(actor_class, row):
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)
+    set_actor_tags(actor, row)
     spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row, actor_location)
     validate_spline_not_collapsed(spline_component, row)
-    set_actor_tags(actor, row)
     return actor
 
 
