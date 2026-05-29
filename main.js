@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.6";
-const APP_VERSION_DATE = "2026-05-29 10:22 +02:00";
+const APP_VERSION = "0.1.7";
+const APP_VERSION_DATE = "2026-05-29 10:34 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3819,11 +3819,6 @@ def point_to_vector(point):
     )
 
 
-def vector_to_local(point, origin):
-    world = point_to_vector(point)
-    return unreal.Vector(world.x - origin.x, world.y - origin.y, world.z - origin.z)
-
-
 def require_spline(row, index):
     if not isinstance(row, dict):
         fail(f"Spline {index} must be an object")
@@ -3855,6 +3850,15 @@ def set_editor_property_if_present(obj, property_name, value):
         return False
 
 
+def set_spline_component_world_origin(spline_component, actor_location):
+    relative_location = unreal.Vector(-actor_location.x, -actor_location.y, -actor_location.z)
+    if not set_editor_property_if_present(spline_component, "relative_location", relative_location):
+        fail(
+            "SplineComponent does not expose relative_location. "
+            "Cannot keep generated spline coordinates in world space while moving the actor."
+        )
+
+
 def set_tags(actor, tags):
     actor.tags = [unreal.Name(str(tag)) for tag in tags if str(tag)]
 
@@ -3878,9 +3882,10 @@ def set_payload_if_present(actor, row, object_type):
 def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", False)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
+    set_spline_component_world_origin(spline_component, actor_location)
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
-        spline_component.add_spline_point(vector_to_local(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
+        spline_component.add_spline_point(point_to_vector(point), unreal.SplineCoordinateSpace.LOCAL, False)
     for index in range(len(row["Points"])):
         point_type = unreal.SplinePointType.LINEAR if LINEAR_SPLINES else unreal.SplinePointType.CURVE
         spline_component.set_spline_point_type(index, point_type, False)
@@ -3926,10 +3931,12 @@ def create_street_spline_actor(actor_class, row):
     if actor is None:
         fail(f"Failed to spawn actor '{label}'")
     actor.set_actor_label(label)
+    set_actor_tags(actor, row)
     spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row, actor_location)
     rerun_construction_scripts(actor)
-    set_actor_tags(actor, row)
+    spline_component = find_spline_component(actor)
+    configure_spline_component(spline_component, row, actor_location)
     return actor
 
 
