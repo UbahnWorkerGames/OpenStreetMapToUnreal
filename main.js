@@ -4308,7 +4308,9 @@ def write_spline_points(spline_component, row, actor_location):
 
 
 def configure_spline_component(spline_component, row, actor_location):
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
+    # Block CS while writing points to prevent it from resetting the spline
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     write_spline_points(spline_component, row, actor_location)
 
 
@@ -4375,7 +4377,9 @@ def create_street_spline_actor(actor_class, row):
     spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row, actor_location)
     validate_spline_not_collapsed(spline_component, row)
-    # Let the Blueprint construction script build visual geometry from spline data
+    # Now that points are verified correct, let the CS build visual geometry
+    set_editor_property_if_present(spline_component, "override_construction_script", False)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     actor.rerun_construction_scripts()
     return actor
 
