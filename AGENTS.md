@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.21 | 2026-05-29 13:45 +02:00 | Normalizes exported spline direction once and applies the requested rotated/mirrored area coordinate transform.
 - 0.1.20 | 2026-05-29 13:31 +02:00 | Restores area axes to X=east/Y=north and deduplicates generated street splines by geometry instead of road label.
 - 0.1.19 | 2026-05-29 13:17 +02:00 | Generates ActorLabel in the web export and rejects missing or Unnamed spline labels in the Unreal importer.
 - 0.1.18 | 2026-05-29 13:04 +02:00 | Clips full area road ways to a context margin and deduplicates generated street actors by final Outliner label before spawn.

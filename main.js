@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.20";
-const APP_VERSION_DATE = "2026-05-29 13:31 +02:00";
+const APP_VERSION = "0.1.21";
+const APP_VERSION_DATE = "2026-05-29 13:45 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -1753,6 +1753,26 @@ function areaExportGroupKey(feature) {
   return normalizeAreaKey(`${feature.category}_${name}`).toLowerCase();
 }
 
+function normalizedExportDirection(poly) {
+  if (!Array.isArray(poly) || poly.length < 2) return poly;
+  const first = poly[0];
+  const last = poly[poly.length - 1];
+  if (first[0] < last[0]) return poly;
+  if (first[0] > last[0]) return [...poly].reverse();
+  return first[1] <= last[1] ? poly : [...poly].reverse();
+}
+
+function normalizeAreaFeatureDirection(feature) {
+  const controlGeometry = normalizedExportDirection(feature.controlGeometry);
+  return {
+    ...feature,
+    clippedGeometry: normalizedExportDirection(feature.clippedGeometry || controlGeometry),
+    simplifiedGeometry: controlGeometry,
+    controlGeometry,
+    segment10mGeometry: resamplePolylineBySpacing(controlGeometry, AREA_SEGMENT_SPACING_M),
+  };
+}
+
 function averagePointDistanceM(trackA, trackB) {
   const n = Math.max(2, Math.min(24, Math.round(Math.min(trackA.length, trackB.length))));
   const a = resamplePolyline(trackA, n);
@@ -1855,7 +1875,7 @@ function normalizeAreaSplineFeaturesForExport(features) {
   for (const group of groups.values()) {
     const centered = mergeAreaCenterlines(group);
     const stitched = stitchConnectedAreaFeatures(centered, AREA_EXPORT_STITCH_MAX_DISTANCE_M);
-    result.push(...removeDuplicateAreaFeatures(stitched));
+    result.push(...removeDuplicateAreaFeatures(stitched).map(normalizeAreaFeatureDirection));
   }
   return result;
 }
@@ -3191,8 +3211,8 @@ function buildAreaExportTransform(selected) {
       const eastCm = +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1));
       const northCm = +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1));
       return {
-        X: eastCm,
-        Y: northCm,
+        X: -northCm,
+        Y: eastCm,
         Z: 0,
       };
     },
