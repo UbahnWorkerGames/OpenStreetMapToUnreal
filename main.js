@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.19";
-const APP_VERSION_DATE = "2026-05-29 13:17 +02:00";
+const APP_VERSION = "0.1.20";
+const APP_VERSION_DATE = "2026-05-29 13:31 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3191,8 +3191,8 @@ function buildAreaExportTransform(selected) {
       const eastCm = +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1));
       const northCm = +(((lat - lat0) * metersPerDegreeLat * 100).toFixed(1));
       return {
-        X: northCm,
-        Y: eastCm,
+        X: eastCm,
+        Y: northCm,
         Z: 0,
       };
     },
@@ -3981,28 +3981,46 @@ def actor_label_for_spline(row):
     return label.strip()
 
 
-def spline_endpoint_span(row):
+def spline_geometry_signature(row):
     points = row.get("Points")
     if not isinstance(points, list) or len(points) < 2:
-        return 0.0
-    return vector_distance(point_to_vector(points[0]), point_to_vector(points[-1]))
+        return ""
+    rounded = []
+    for point in points:
+        if isinstance(point, list) and len(point) >= 2:
+            rounded.append(f"{float(point[0]):.1f},{float(point[1]):.1f}")
+    forward = "|".join(rounded)
+    backward = "|".join(reversed(rounded))
+    return forward if forward < backward else backward
 
 
 def dedupe_spline_rows(rows):
-    by_label = {}
+    by_geometry = {}
     duplicates = 0
     for row in rows:
-        label = actor_label_for_spline(row)
-        existing = by_label.get(label)
+        signature = spline_geometry_signature(row)
+        existing = by_geometry.get(signature)
         if existing is None:
-            by_label[label] = row
+            by_geometry[signature] = row
             continue
         duplicates += 1
-        if spline_endpoint_span(row) > spline_endpoint_span(existing):
-            by_label[label] = row
     if duplicates:
-        unreal.log(f"[INFO] Removed {duplicates} duplicate street spline row(s) by actor label before spawn")
-    return list(by_label.values())
+        unreal.log(f"[INFO] Removed {duplicates} duplicate street spline row(s) by geometry before spawn")
+    return list(by_geometry.values())
+
+
+def uniquify_actor_labels(rows):
+    counts = {}
+    result = []
+    for row in rows:
+        base_label = actor_label_for_spline(row)
+        count = counts.get(base_label, 0) + 1
+        counts[base_label] = count
+        if count > 1:
+            row = dict(row)
+            row["ActorLabel"] = f"{base_label}_{count:02d}"
+        result.append(row)
+    return result
 
 
 def point_to_vector(point):
@@ -4264,6 +4282,7 @@ def main():
     point_count = 0
     rows = [require_spline(source_row, index) for index, source_row in enumerate(STREET_SPLINES)]
     rows = dedupe_spline_rows(rows)
+    rows = uniquify_actor_labels(rows)
     for row in rows:
         point_count += len(row["Points"])
         actor_class = bp_class_for_row(row, bp_class_cache)
