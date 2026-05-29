@@ -4491,9 +4491,10 @@ def create_tree_actor(actor_class, row):
 
 
 def create_prop_actor(actor_class, row):
-    label_name = row.get("DisplayName") or row.get("Name") or row.get("Type") or row.get("PropKey", "Prop")
+    prop_type = sanitize_label_part(row.get("Type") or row.get("Category", "Prop"))
+    label_name = row.get("DisplayName") or row.get("Name") or row.get("PropKey", "Prop")
     osm_id = sanitize_label_part(str(row.get("OsmId", "")))
-    label = _unique_label(f"{PROP_ACTOR_LABEL_PREFIX}_{sanitize_label_part(label_name)}_{osm_id}")
+    label = _unique_label(f"{PROP_ACTOR_LABEL_PREFIX}_{prop_type}_{sanitize_label_part(label_name)}_{osm_id}")
     destroy_existing_actor_with_label(label)
     location = unreal.Vector(
         float(row["X"]) + WORLD_OFFSET_CM.x,
@@ -5332,6 +5333,45 @@ async function captureMapImageForGroundPlane() {
   }
 }
 
+async function exportMapPng() {
+  if (!areaSelectionBounds?.isValid?.()) {
+    setStatus("Kein Bereich ausgewählt.", true);
+    return;
+  }
+  setStatus("Kartenbild wird geladen...");
+  try {
+    const center = areaSelectionBounds.getCenter();
+    const zoom = map.getZoom();
+    const maxDim = 2048;
+    const sw = areaSelectionBounds.getSouthWest();
+    const ne = areaSelectionBounds.getNorthEast();
+    const aspectW = ne.lng - sw.lng;
+    const aspectH = ne.lat - sw.lat;
+    let w, h;
+    if (aspectW > aspectH) { w = maxDim; h = Math.round(maxDim * (aspectH / aspectW)); }
+    else { h = maxDim; w = Math.round(maxDim * (aspectW / aspectH)); }
+    w = Math.max(64, Math.min(3000, w));
+    h = Math.max(64, Math.min(3000, h));
+    const url = `https://staticmap.openstreetmap.de/staticmap.php?center=${center.lat.toFixed(6)},${center.lng.toFixed(6)}&zoom=${zoom}&size=${w}x${h}&maptype=mapnik`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `uemap_ground_${center.lat.toFixed(4)}_${center.lng.toFixed(4)}_z${zoom}.png`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setStatus(`Map PNG exportiert: ${w}x${h}px, Zoom ${zoom}`);
+  } catch (error) {
+    setStatus(`Map-PNG-Export fehlgeschlagen: ${error.message}`, true);
+  }
+}
+
 function showBlueprintSetupPython() {
   try {
     const bpPaths = getAreaBpPathsForExport();
@@ -6109,6 +6149,7 @@ document.getElementById("btn-export-pcg")?.addEventListener("click", exportAreaP
 document.getElementById("btn-export-props")?.addEventListener("click", exportAreaPcgProps);
 document.getElementById("btn-export-heightmap")?.addEventListener("click", exportHeightmap);
 document.getElementById("btn-export-area-python")?.addEventListener("click", exportAreaUnrealPython);
+document.getElementById("btn-export-map-png")?.addEventListener("click", exportMapPng);
 document.getElementById("btn-python-close")?.addEventListener("click", closePythonCodeModal);
 document.getElementById("btn-python-copy")?.addEventListener("click", copyPythonCodeFromModal);
 document.getElementById("btn-python-download")?.addEventListener("click", () => {
