@@ -4274,16 +4274,11 @@ def write_spline_points(spline_component, row):
     elif bool(row.get("bClosed", False)):
         fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
     spline_component.update_spline()
-    set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     call_method_if_present(spline_component, "post_edit_change")
-    # UE5 editor bug: spline may appear collapsed until a point is touched.
-    _force_spline_invalidation(spline_component, len(row["Points"]))
 
 
 def configure_spline_component(spline_component, row):
-    set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
     write_spline_points(spline_component, row)
 
 
@@ -4350,6 +4345,8 @@ def create_street_spline_actor(actor_class, row):
     spline_component = find_spline_component(actor)
     configure_spline_component(spline_component, row)
     validate_spline_not_collapsed(spline_component, row)
+    # Let the Blueprint construction script build visual geometry from spline data
+    actor.rerun_construction_scripts()
     return actor
 
 
