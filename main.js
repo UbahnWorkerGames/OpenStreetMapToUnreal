@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.13";
-const APP_VERSION_DATE = "2026-05-29 11:42 +02:00";
+const APP_VERSION = "0.1.14";
+const APP_VERSION_DATE = "2026-05-29 11:58 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -206,6 +206,18 @@ const AREA_SPLINE_CATEGORIES = new Set([
   "hedge",
   "aeroway",
   "nudist",
+]);
+const AREA_FULL_WAY_SPLINE_CATEGORIES = new Set([
+  "motorway",
+  "major_road",
+  "city_road",
+  "service",
+  "cycleway",
+  "footway",
+  "rail_tram",
+  "rail_train",
+  "rail_subway",
+  "bus",
 ]);
 
 const AREA_PROP_CATEGORIES = new Set([
@@ -1909,7 +1921,9 @@ function buildAreaFeatures(data, bounds) {
 
     const rawGeometry = normalizeOverpassGeometry(el.geometry);
     if (rawGeometry.length < 2) continue;
-    const clippedParts = clipPolylineToBounds(rawGeometry, bounds);
+    const clippedParts = AREA_FULL_WAY_SPLINE_CATEGORIES.has(category)
+      ? [rawGeometry]
+      : clipPolylineToBounds(rawGeometry, bounds);
     for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
       const clippedGeometry = clippedParts[partIndex];
       const tags = el.tags || {};
@@ -3806,6 +3820,37 @@ def sanitize_label_part(value):
     return sanitized or "Unnamed"
 
 
+def road_kind_label(row):
+    row_type = str(row.get("Type", "street"))
+    osm_class = str(row.get("OsmClass", ""))
+    if row_type == "major_road":
+        return "Hauptstrasse"
+    if row_type == "city_road":
+        return "Stadtstrasse"
+    if row_type == "service":
+        return "Service"
+    if row_type == "motorway":
+        return "Autobahn"
+    if row_type == "cycleway":
+        return "Radweg"
+    if row_type == "footway":
+        return "Fussweg"
+    if row_type == "rail_tram":
+        return "Tram"
+    if row_type == "rail_train":
+        return "Bahn"
+    if row_type == "rail_subway":
+        return "UBahn"
+    if row_type == "bus":
+        return "Bus"
+    return sanitize_label_part(osm_class or row_type or "Strasse")
+
+
+def actor_label_for_spline(row):
+    name = row.get("Street") or row.get("SplineKey") or "Unbenannt"
+    return f"BP_{sanitize_label_part(road_kind_label(row))}_{sanitize_label_part(name)}"
+
+
 def point_to_vector(point):
     if not isinstance(point, list) or len(point) != 3:
         fail(f"Invalid point: {point}")
@@ -3895,8 +3940,6 @@ def configure_spline_component(spline_component, row, actor_location):
     set_editor_property_if_present(spline_component, "override_construction_script", True)
     set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
     write_spline_points(spline_component, row, actor_location)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
-    write_spline_points(spline_component, row, actor_location)
 
 
 def spline_world_location_at_point(spline_component, index):
@@ -3947,7 +3990,7 @@ def set_actor_tags(actor, row):
 
 
 def create_street_spline_actor(actor_class, row):
-    label = f"{ACTOR_LABEL_PREFIX}_{sanitize_label_part(row['SplineKey'])}"
+    label = actor_label_for_spline(row)
     destroy_existing_actor_with_label(label)
     actor_location = point_to_vector(row["Points"][0])
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(
