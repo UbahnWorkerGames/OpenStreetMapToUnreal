@@ -10,7 +10,8 @@
 
 ## Version Log
 
-- 0.1.5 | 2026-05-29 10:35 +02:00 | Spawns street spline actors at their first point, stores spline points locally, and keeps area exports on one shared origin.
+- 0.1.6 | 2026-05-29 10:22 +02:00 | Uses a fixed Berlin area-export origin so separate sector imports align in one Unreal world.
+- 0.1.5 | 2026-05-29 10:21 +02:00 | Spawns street spline actors at their first point and stores generated spline points locally.
 - 0.1.4 | 2026-05-28 22:10 +02:00 | Replaces only matching Unreal actors and preserves existing exports; passes spline points through construction scripts.
 - 0.1.3 | 2026-05-28 21:40 +02:00 | Sets Blueprint payload map when available and broadens traffic sign discovery.
 - 0.1.2 | 2026-05-28 21:31 +02:00 | Removed encoded JSON from Unreal actor tags; tag 0 is a plain object type again.

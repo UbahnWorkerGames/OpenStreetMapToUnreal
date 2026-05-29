@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.5";
-const APP_VERSION_DATE = "2026-05-29 10:35 +02:00";
+const APP_VERSION = "0.1.6";
+const APP_VERSION_DATE = "2026-05-29 10:22 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +78,7 @@ const OVERPASS_CACHE_KEY = "ubahn.overpass.dataset.v1";
 const POSTAL_CODE_CACHE_KEY_PREFIX = "uemap.postal-code.";
 const AREA_SELECTIONS_STORAGE_KEY = "uemap.areaSelections.v1";
 const MASTER_CACHE_KEY_PREFIX = "ubahn.master.v4.";
+const AREA_WORLD_ORIGIN_WGS84 = { lat: 52.52, lon: 13.405 };
 const DEFAULT_AREA_BP_PATHS = {
   tunnel: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   subway: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
@@ -2958,24 +2959,13 @@ function buildAreaPcgSplines() {
   );
   if (!selected.length) return null;
 
-  const origin = selected[0].controlGeometry[0];
-  const [lat0, lon0] = origin;
-  const cosLat = Math.cos((lat0 * Math.PI) / 180);
-  const metersPerDegreeLat = 111320;
-  const metersPerDegreeLon = 111320 * cosLat;
-
-  function toPointCm([lat, lon]) {
-    return {
-      X: +(((lon - lon0) * metersPerDegreeLon) * 100).toFixed(1),
-      Y: +(((lat - lat0) * metersPerDegreeLat) * 100).toFixed(1),
-      Z: 0,
-    };
-  }
+  const transform = buildAreaExportTransform(selected);
+  if (!transform) return null;
 
   const rows = [];
   for (const feature of selected) {
     if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
-    const controlPoints = feature.controlGeometry.map(toPointCm);
+    const controlPoints = feature.controlGeometry.map((point) => transform.toPointCm(point));
     const pointCount = controlPoints.length;
     const bClosed = Boolean(feature.closed || isClosedPolyline(feature.controlGeometry));
     controlPoints.forEach((point, pointIndex) => {
@@ -3055,13 +3045,13 @@ function normalizeDegrees(degrees) {
 }
 
 function buildAreaExportTransform(selected) {
-  const origin = selected.find((feature) => feature.controlGeometry?.length)?.controlGeometry[0];
-  if (!origin) return null;
-  const [lat0, lon0] = origin;
+  if (!selected.some((feature) => feature.controlGeometry?.length)) return null;
+  const { lat: lat0, lon: lon0 } = AREA_WORLD_ORIGIN_WGS84;
   const metersPerDegreeLat = 111320;
   const metersPerDegreeLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
   return {
     originWgs84: { lat: lat0, lon: lon0 },
+    originMode: "fixed_berlin_world_origin",
     toPointCm([lat, lon]) {
       return {
         X: +(((lon - lon0) * metersPerDegreeLon * 100).toFixed(1)),
@@ -3263,6 +3253,7 @@ function buildAreaPythonExportPayload() {
   const splines = buildAreaPythonSplineData(transform) || [];
   return {
     origin_wgs84: transform.originWgs84,
+    origin_mode: transform.originMode,
     splines: splines.filter((row) => AREA_SPLINE_CATEGORIES.has(row.Type)),
     buildings: buildBuildingData(selected, transform),
     trees: buildTreeData(selected, transform),
