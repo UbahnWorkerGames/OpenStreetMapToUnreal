@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.13 | 2026-05-29 11:42 +02:00 | Stitches visible spline exports more aggressively and preserves imported spline points for later Blueprint construction reruns.
 - 0.1.12 | 2026-05-29 11:27 +02:00 | Applies street actor metadata before final spline writes so payload changes cannot reset generated spline geometry.
 - 0.1.11 | 2026-05-29 11:18 +02:00 | Places generated street actors at their first spline point and writes spline points relative to that actor origin.
 - 0.1.10 | 2026-05-29 11:07 +02:00 | Restores the pre-0.1.4 spline construction flags so Blueprint construction scripts do not collapse street spline points.

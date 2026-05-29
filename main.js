@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.12";
-const APP_VERSION_DATE = "2026-05-29 11:27 +02:00";
+const APP_VERSION = "0.1.13";
+const APP_VERSION_DATE = "2026-05-29 11:42 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -256,6 +256,8 @@ const AREA_DEDUPE_DECIMALS = 5;
 const AREA_DRAW_RAW_GEOMETRY = false;
 const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
+const AREA_STITCH_MAX_DISTANCE_M = 18;
+const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
 const AREA_LARGE_REQUEST_KM2 = 25;
 const AREA_MAX_REQUEST_KM2 = 100;
 const AREA_EXPENSIVE_LAYERS = new Set(["city_road", "service", "building", "tree"]);
@@ -1785,7 +1787,7 @@ function canStitchAreaFeatures(a, b) {
     areaCenterlineGroupKey(a.category, a.name) === areaCenterlineGroupKey(b.category, b.name);
 }
 
-function stitchAreaFeaturePair(a, b) {
+function stitchAreaFeaturePair(a, b, maxDistanceM = AREA_STITCH_MAX_DISTANCE_M) {
   const options = [
     { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry[0]), geometry: [...a.controlGeometry, ...b.controlGeometry.slice(1)] },
     { distance: haversineM(a.controlGeometry.at(-1), b.controlGeometry.at(-1)), geometry: [...a.controlGeometry, ...[...b.controlGeometry].reverse().slice(1)] },
@@ -1793,7 +1795,7 @@ function stitchAreaFeaturePair(a, b) {
     { distance: haversineM(a.controlGeometry[0], b.controlGeometry[0]), geometry: [...[...b.controlGeometry].reverse(), ...a.controlGeometry.slice(1)] },
   ].sort((x, y) => x.distance - y.distance);
 
-  if (options[0].distance > 6) return null;
+  if (options[0].distance > maxDistanceM) return null;
   const controlGeometry = simplifyPolyline(options[0].geometry, AREA_SIMPLIFY_TOLERANCE_M);
   return {
     ...a,
@@ -1807,7 +1809,7 @@ function stitchAreaFeaturePair(a, b) {
   };
 }
 
-function stitchConnectedAreaFeatures(features) {
+function stitchConnectedAreaFeatures(features, maxDistanceM = AREA_STITCH_MAX_DISTANCE_M) {
   let pending = [...features];
   let changed = true;
   while (changed) {
@@ -1816,7 +1818,7 @@ function stitchConnectedAreaFeatures(features) {
     for (let i = 0; i < pending.length; i++) {
       for (let j = i + 1; j < pending.length; j++) {
         if (!canStitchAreaFeatures(pending[i], pending[j])) continue;
-        const stitched = stitchAreaFeaturePair(pending[i], pending[j]);
+        const stitched = stitchAreaFeaturePair(pending[i], pending[j], maxDistanceM);
         if (!stitched) continue;
         pending = pending.filter((_, index) => index !== i && index !== j);
         pending.push(stitched);
@@ -2950,13 +2952,18 @@ function areaPcgRowName(key, pointIndex) {
   return `${key}_${String(pointIndex).padStart(4, "0")}`;
 }
 
-function buildAreaPcgSplines() {
+function selectedAreaSplineFeaturesForExport() {
   const selected = areaFeatures.filter(
     (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
       areaLayerVisibility.get(feature.category) &&
       Array.isArray(feature.controlGeometry) &&
       feature.controlGeometry.length >= 2,
   );
+  return stitchConnectedAreaFeatures(selected, AREA_EXPORT_STITCH_MAX_DISTANCE_M);
+}
+
+function buildAreaPcgSplines() {
+  const selected = selectedAreaSplineFeaturesForExport();
   if (!selected.length) return null;
 
   const transform = buildAreaExportTransform(selected);
@@ -2993,12 +3000,7 @@ function buildAreaPcgSplines() {
 }
 
 function buildAreaPythonSplineData(transform = null) {
-  const selected = areaFeatures.filter(
-    (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
-      areaLayerVisibility.get(feature.category) &&
-      Array.isArray(feature.controlGeometry) &&
-      feature.controlGeometry.length >= 2,
-  );
+  const selected = selectedAreaSplineFeaturesForExport();
   if (!selected.length) return null;
 
   const exportTransform = transform || buildAreaExportTransform(selected);
@@ -3875,9 +3877,7 @@ def set_payload_if_present(actor, row, object_type):
     return True
 
 
-def configure_spline_component(spline_component, row, actor_location):
-    set_editor_property_if_present(spline_component, "override_construction_script", True)
-    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+def write_spline_points(spline_component, row, actor_location):
     spline_component.clear_spline_points(False)
     for point in row["Points"]:
         spline_component.add_spline_point(point_to_local_vector(point, actor_location), unreal.SplineCoordinateSpace.LOCAL, False)
@@ -3889,6 +3889,14 @@ def configure_spline_component(spline_component, row, actor_location):
     elif bool(row.get("bClosed", False)):
         fail("SplineComponent does not expose set_closed_loop, but the source spline is closed")
     spline_component.update_spline()
+
+
+def configure_spline_component(spline_component, row, actor_location):
+    set_editor_property_if_present(spline_component, "override_construction_script", True)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", False)
+    write_spline_points(spline_component, row, actor_location)
+    set_editor_property_if_present(spline_component, "input_spline_points_to_construction_script", True)
+    write_spline_points(spline_component, row, actor_location)
 
 
 def spline_world_location_at_point(spline_component, index):
