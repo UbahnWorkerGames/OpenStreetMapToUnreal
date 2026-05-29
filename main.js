@@ -5512,8 +5512,8 @@ async function captureMapImageForGroundPlane() {
     resized.width = w;
     resized.height = h;
     const rctx = resized.getContext("2d");
-    // Flip vertically: UE plane Y axis is inverted relative to browser canvas
-    rctx.setTransform(1, 0, 0, -1, 0, h);
+    // Mirror horizontally (180° around Y): UE plane X axis is inverted relative to map image
+    rctx.setTransform(-1, 0, 0, 1, w, 0);
     rctx.drawImage(canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
     // Reset transform for toDataURL
     rctx.setTransform(1, 0, 0, 1, 0, 0);
