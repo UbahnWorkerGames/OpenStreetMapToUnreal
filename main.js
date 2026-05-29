@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.15";
-const APP_VERSION_DATE = "2026-05-29 12:18 +02:00";
+const APP_VERSION = "0.1.16";
+const APP_VERSION_DATE = "2026-05-29 12:35 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -270,6 +270,7 @@ const AREA_CENTERLINE_MAX_DISTANCE_M = 18;
 const AREA_CENTERLINE_LENGTH_RATIO = 0.72;
 const AREA_ROAD_CENTERLINE_MAX_DISTANCE_M = 45;
 const AREA_ROAD_CENTERLINE_LENGTH_RATIO = 0.35;
+const AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M = 6;
 const AREA_STITCH_MAX_DISTANCE_M = 18;
 const AREA_EXPORT_STITCH_MAX_DISTANCE_M = 35;
 const AREA_LARGE_REQUEST_KM2 = 25;
@@ -1734,6 +1735,11 @@ function isDirectionalRoadCategory(category) {
   return ["motorway", "major_road", "city_road", "service", "cycleway", "footway", "bus"].includes(category);
 }
 
+function areaExportGroupKey(feature) {
+  const name = feature.name || feature.tags?.name || feature.tags?.ref || feature.tags?.highway || feature.key;
+  return normalizeAreaKey(`${feature.category}_${areaFeatureExportClass(feature)}_${name}`).toLowerCase();
+}
+
 function averagePointDistanceM(trackA, trackB) {
   const n = Math.max(2, Math.min(24, Math.round(Math.min(trackA.length, trackB.length))));
   const a = resamplePolyline(trackA, n);
@@ -1802,6 +1808,43 @@ function mergeAreaCenterlines(features) {
     }
   }
   return merged;
+}
+
+function removeDuplicateAreaFeatures(features) {
+  const kept = [];
+  const sorted = [...features].sort((a, b) => polylineLengthM(b.controlGeometry) - polylineLengthM(a.controlGeometry));
+  for (const feature of sorted) {
+    const duplicate = kept.some((candidate) => {
+      if (candidate.category !== feature.category) return false;
+      const lenA = polylineLengthM(feature.segment10mGeometry);
+      const lenB = polylineLengthM(candidate.segment10mGeometry);
+      if (lenA <= 0 || lenB <= 0) return false;
+      const lengthRatio = Math.min(lenA, lenB) / Math.max(lenA, lenB);
+      if (lengthRatio < 0.85) return false;
+      return averagePointDistanceM(feature.segment10mGeometry, candidate.segment10mGeometry) <= AREA_EXPORT_DUPLICATE_MAX_DISTANCE_M;
+    });
+    if (!duplicate) kept.push(feature);
+  }
+  return kept;
+}
+
+function normalizeAreaSplineFeaturesForExport(features) {
+  const groups = new Map();
+  for (const feature of features) {
+    const key = isDirectionalRoadCategory(feature.category)
+      ? areaExportGroupKey(feature)
+      : `${feature.category}_${feature.key}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(feature);
+  }
+
+  const result = [];
+  for (const group of groups.values()) {
+    const centered = mergeAreaCenterlines(group);
+    const stitched = stitchConnectedAreaFeatures(centered, AREA_EXPORT_STITCH_MAX_DISTANCE_M);
+    result.push(...removeDuplicateAreaFeatures(stitched));
+  }
+  return result;
 }
 
 function canStitchAreaFeatures(a, b) {
@@ -2985,7 +3028,7 @@ function selectedAreaSplineFeaturesForExport() {
       Array.isArray(feature.controlGeometry) &&
       feature.controlGeometry.length >= 2,
   );
-  return stitchConnectedAreaFeatures(mergeAreaCenterlines(selected), AREA_EXPORT_STITCH_MAX_DISTANCE_M);
+  return normalizeAreaSplineFeaturesForExport(selected);
 }
 
 function buildAreaPcgSplines() {
@@ -3036,6 +3079,7 @@ function buildAreaPythonSplineData(transform = null) {
     if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
     return {
       ObjectType: "OSM_SPLINE",
+      Name: feature.name || feature.key,
       SplineKey: feature.key,
       Type: feature.category,
       Shape: feature.shape || "line",
@@ -3834,6 +3878,13 @@ def sanitize_label_part(value):
     return sanitized or "Unnamed"
 
 
+def label_part(value, fallback):
+    sanitized = sanitize_label_part(value)
+    if sanitized == "Unnamed":
+        sanitized = sanitize_label_part(fallback)
+    return sanitized
+
+
 def road_kind_label(row):
     row_type = str(row.get("Type", "street"))
     osm_class = str(row.get("OsmClass", ""))
@@ -3861,8 +3912,12 @@ def road_kind_label(row):
 
 
 def actor_label_for_spline(row):
-    name = row.get("Street") or row.get("SplineKey") or "Unbenannt"
-    return f"BP_{sanitize_label_part(road_kind_label(row))}_{sanitize_label_part(name)}"
+    key = row.get("SplineKey")
+    if not isinstance(key, str) or not key:
+        fail(f"Cannot build actor label without SplineKey: {row}")
+    kind = label_part(road_kind_label(row), row.get("Type") or row.get("OsmClass") or "Straße")
+    name = label_part(row.get("Street") or row.get("Name") or key, key)
+    return f"BP_{kind}_{name}"
 
 
 def point_to_vector(point):
