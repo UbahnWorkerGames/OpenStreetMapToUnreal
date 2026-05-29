@@ -10,7 +10,7 @@
 
 ## Version Log
 
-- 0.1.30 | 2026-05-29 17:00 +02:00 | Includes prop Type in actor labels for Outliner identification; adds Map PNG download button for manual ground plane texturing.
+- 0.1.30 | 2026-05-29 15:11 +02:00 | Includes prop Type in actor labels for Outliner identification; adds Map PNG download button for manual ground plane texturing.
 - 0.1.29 | 2026-05-29 16:30 +02:00 | Fixes building/tree label collision by always including OsmId in actor labels; adds prefix cleanup in main(); adds ground plane with static map texture under all elements; adds _unique_label() counter as collision safety net; 10s timeout on map image fetch.
 - 0.1.28 | 2026-05-29 15:45 +02:00 | Overpass UX: spinner, cancel button, 95s timeout, auto-retry on 504, percentage progress, async batch processing to prevent browser freeze.
 - 0.1.27 | 2026-05-29 15:10 +02:00 | Fixes prop rotation (Rotator yaw→roll parameter swap) and spline collapse via programmatic nudge workaround for UE5 editor bug.
