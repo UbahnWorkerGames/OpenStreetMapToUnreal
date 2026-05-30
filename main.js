@@ -4913,7 +4913,7 @@ def _create_transit_bp():
 
     # StationsData
     arr = cdo.get_editor_property("StationsData")
-    unreal.log_warning(f"[TRANSIT] StationsData CDO: {type(arr).__name__ if arr else 'None'} LEN={len(arr) if arr else 0}")
+    unreal.log_warning(f"[TRANSIT] StationsData CDO: {type(arr).__name__ if arr is not None else 'None'} LEN={len(arr) if arr is not None and arr else 0}")
     if arr is not None and len(LINE_STATIONS) > 0:
         cdo.modify()
         arr.resize(len(LINE_STATIONS))
@@ -4941,10 +4941,12 @@ def _create_transit_bp():
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
     # CDO → Blueprint class defaults übertragen
-    unreal.BlueprintEditorLibrary.compile_blueprint(new_bp)
+    # BP + CDO als modifiziert markieren, dann speichern
+    new_bp.modify()
     unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
     # Verify
-    verify = unreal.get_default_object(new_bp.generated_class()).get_editor_property("StationsData")
+    bp_class2 = unreal.load_asset(output_path).generated_class()
+    verify = unreal.get_default_object(bp_class2).get_editor_property("StationsData")
     unreal.log_warning(f"[TRANSIT] Nach Save: StationsData LEN={len(verify) if verify else 0}")
     unreal.log_warning(f"[TRANSIT] Fertig: {output_path}")
 
