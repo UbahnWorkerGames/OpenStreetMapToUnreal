@@ -1674,15 +1674,22 @@ function buildAreaOverpassQuery(bounds, categories = getSelectedAreaCategories()
     .flatMap((filter) => Array.isArray(filter) ? filter : [filter])
     .map((filter) => `  ${filter}(${bbox});`)
     .join("\n");
-  const relationClauses = areaRouteModesForCategories(categories)
+  const relationModes = areaRouteModesForCategories(categories);
+  const relationClauses = relationModes
     .map((mode) => `  relation["type"="route"]["route"="${mode}"](${bbox});`)
     .join("\n");
   if (!clauses && !relationClauses) throw new Error("Keine Bereichs-Layer für Overpass ausgewählt.");
+  // Member-Nodes der Transit-Routes (Haltestellen) separat nachladen, damit
+  // extractStopNodes die Stops mit Koordinaten findet (out body geom allein
+  // liefert nur Way-Geometrie, keine member-Nodes).
+  const stopClauses = relationModes.length
+    ? `\nrelation["type"="route"](${bbox})->.routes;\nnode(r.routes);\nout body;`
+    : "";
   return `[out:json][timeout:120];
 (
 ${clauses}${relationClauses ? `\n${relationClauses}` : ""}
 );
-out body geom;`;
+out body geom;${stopClauses}`;
 }
 
 function outCode(lat, lon, bounds) {
@@ -2126,6 +2133,12 @@ function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
 
     const stitched = stitchTrackSegments(extractTrackSegments(relation, elements));
     if (stitched.length < 2) continue;
+    // Haltestellen der Linie (Name + Distanz entlang der vollen Linie). Minimal:
+    // nur was im jeweiligen geclippten Part liegt landet später am Feature.
+    const relationStops = extractStopNodes(relation, elements, "bus").map((stop) => {
+      const { distAlongTrack } = projectOntoTrack([stop.lat, stop.lon], stitched);
+      return { name: stop.name, lat: stop.lat, lon: stop.lon, distAlongTrack };
+    });
     const clippedParts = clipPolylineToBounds(stitched, bounds);
     for (let partIndex = 0; partIndex < clippedParts.length; partIndex++) {
       const clippedGeometry = clippedParts[partIndex];
@@ -2139,6 +2152,19 @@ function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
       const name = tags.name || (ref ? `Bus ${ref}` : `Bus ${relation.id}`);
       const key = normalizeAreaKey(`bus_${ref || name}_${relation.id}_${partIndex}`);
       if (!key) throw new Error(`Bus-Relation ${relation.id} konnte nicht zu einem gültigen Key normalisiert werden.`);
+      // Nur Stops, deren Position im geclippten Part-Bereich liegt; Distanz auf
+      // den Part-Anfang umrechnen, damit sie zur exportierten Spline passt.
+      const partStartM = projectOntoTrack(clippedGeometry[0], stitched).distAlongTrack;
+      const partEndM = projectOntoTrack(clippedGeometry[clippedGeometry.length - 1], stitched).distAlongTrack;
+      const lo = Math.min(partStartM, partEndM);
+      const hi = Math.max(partStartM, partEndM);
+      const partStations = relationStops
+        .filter((stop) => stop.distAlongTrack >= lo - 50 && stop.distAlongTrack <= hi + 50)
+        .sort((a, b) => a.distAlongTrack - b.distAlongTrack)
+        .map((stop) => ({
+          Name: stop.name,
+          DistanceM: +Math.max(0, stop.distAlongTrack - lo).toFixed(1),
+        }));
       features.push({
         id: relation.id,
         key,
@@ -2154,6 +2180,7 @@ function buildAreaTransitRelationFeatures(data, bounds, seenSignatures) {
         controlGeometry: simplifiedGeometry,
         segment10mGeometry,
         routeRef: ref,
+        stations: partStations,
       });
     }
   }
@@ -3476,7 +3503,7 @@ function buildAreaPythonSplineData(transform = null) {
 
   return selected.map((feature) => {
     if (!feature.key) throw new Error(`Feature ${feature.id} hat keinen gültigen Export-Key.`);
-    return {
+    const row = {
       ObjectType: "OSM_SPLINE",
       Name: feature.name || feature.key,
       ActorLabel: areaSplineActorLabel(feature),
@@ -3495,6 +3522,13 @@ function buildAreaPythonSplineData(transform = null) {
         return [converted.X, converted.Y, converted.Z];
       }),
     };
+    // Haltestellen dieser Linie als JSON-String (Name + Distanz). Wird via
+    // set_payload_if_present zu payload["StationsJson"] auf dem Actor. Im BP
+    // parsen → struct-Array. Nur wenn die Linie Stops im Bereich hat.
+    if (Array.isArray(feature.stations) && feature.stations.length) {
+      row.StationsJson = JSON.stringify(feature.stations);
+    }
+    return row;
   });
 }
 
