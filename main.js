@@ -4934,7 +4934,7 @@ def _create_transit_bp():
     unreal.log_warning(f"[TRANSIT] Fertig: {label}")
 
 
-def main():def main():
+def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
     destroy_existing_actor_with_prefix(BUILDING_ACTOR_LABEL_PREFIX)
