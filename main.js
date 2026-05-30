@@ -4241,7 +4241,7 @@ PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
 GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
-LINE_STATIONS = json.loads(${lineStationsLiteral})
+LINE_STATIONS_JSON = ${lineStationsLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
@@ -4844,11 +4844,7 @@ def main():
         create_prop_actor(prop_actor_class, row)
     _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
-    if LINE_STATIONS:
-        a = next((x for x in unreal.EditorLevelLibrary.get_all_level_actors() if x.get_actor_label().startswith("CITY_STREET")), None)
-        if a:
-            a.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
-            unreal.log_warning(f"[TRANSIT] StationsJson auf CITY_STREET-Actor: {len(LINE_STATIONS)} Stationen")
+
 
 main()
 `;
@@ -5525,13 +5521,7 @@ async function exportAreaUnrealPython() {
     const groundPlaneImage = await captureMapImageForGroundPlane();
     if (masterStations?.length && lastLoadData?.ref) {
       const ue = exportToUnreal(true);
-      if (ue?.stations?.length) {
-        payload.line_stations_json = JSON.stringify(ue.stations.map((s) => ({
-          name: s.name, key: s.key || stationExportKey(s.name),
-          dist_m: s.dist_m, location_cm: s.location_cm,
-          half_length_m: s.half_length_m, level: s.level
-        })));
-      }
+      if (ue?.stations?.length) payload.line_stations_json = JSON.stringify(ue.stations);
     }
     const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage);
     showPythonCodeModal(code);
