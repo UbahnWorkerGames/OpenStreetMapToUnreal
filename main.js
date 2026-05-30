@@ -4904,41 +4904,10 @@ def _create_transit_bp():
             )
         unreal.log_warning(f"[TRANSIT] Spline: {len(LINE_ROUTE)} Punkte")
 
-    # StationsData auf dem Actor setzen
-    arr = actor.get_editor_property("StationsData")
-    if arr is not None and len(LINE_STATIONS) > 0:
-        arr.resize(len(LINE_STATIONS))
-        for i, st in enumerate(LINE_STATIONS):
-            name   = str(st.get("name", ""))
-            key    = str(st.get("key", name))
-            dist_m = float(st.get("dist_m", 0))
-            pos    = st.get("location_cm", [0, 0, 0])
-            half   = float(st.get("half_length_m", 20))
-            level  = int(st.get("level", 0) or 0)
-
-            template = arr[i].export_text()
-            text = _fill_struct_template(template, {
-                0: f'"{key}"',
-                1: f'"{name}"',
-                2: str(dist_m),
-                3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
-                4: str(half),
-                5: str(level),
-            })
-            elem = arr[i]
-            elem.import_text(text)
-            arr[i] = elem
-        actor.set_editor_property("StationsData", arr)
-        unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
-
-        # Auch StationsJson setzen falls Construction Script das braucht
-        import json
-        stations_json = json.dumps(LINE_STATIONS)
-        actor.set_editor_property("StationsJson", stations_json)
-
-        # Verify
-        verify = actor.get_editor_property("StationsData")
-        unreal.log_warning(f"[TRANSIT] Verify nach Set: {len(verify) if verify is not None and verify else 0}")
+    # StationsJson setzen — Construction Script baut daraus StationsData
+    import json
+    actor.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
+    unreal.log_warning(f"[TRANSIT] StationsJson: {len(LINE_STATIONS)} Stationen")
 
 
 def main():
