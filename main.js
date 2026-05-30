@@ -17,8 +17,8 @@ const TRANSIT_ROUTE_MODES = {
   coach: { label: "Fernbus", category: "coach" },
 };
 
-const APP_VERSION = "0.1.42";
-const APP_VERSION_DATE = "2026-05-30 14:23 +02:00";
+const APP_VERSION = "0.1.43";
+const APP_VERSION_DATE = "2026-05-30 21:12 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -401,6 +401,53 @@ let areaFeatures = [];
 let areaCache = null;
 let datatableAreaLines = [];
 let detectedAreaTransitLines = [];
+// Provider-Filter für Bus-Linien (operator/network). Leeres Set = alle Anbieter.
+let selectedBusProviders = new Set();
+
+function busProviderOf(feature) {
+  const tags = feature?.tags || {};
+  return (tags.operator || tags.network || "").trim();
+}
+
+// True wenn das Feature kein Bus ist ODER sein Anbieter ausgewählt ist
+// (leeres Set = kein Filter aktiv = alles durchlassen).
+function isBusProviderSelected(feature) {
+  if (feature?.category !== "bus") return true;
+  if (!selectedBusProviders.size) return true;
+  return selectedBusProviders.has(busProviderOf(feature) || "(ohne Anbieter)");
+}
+
+// Befüllt das Bus-Anbieter-Multiselect mit den im Bereich gefundenen Anbietern.
+// Leere Auswahl = alle. Wird nach jedem Bereich-Load aufgerufen.
+function populateBusProviderFilter() {
+  const container = document.getElementById("bus-provider-filter");
+  const select = document.getElementById("bus-provider-select");
+  if (!container || !select) return;
+  const counts = new Map();
+  for (const feature of areaFeatures) {
+    if (feature.category !== "bus") continue;
+    const provider = busProviderOf(feature) || "(ohne Anbieter)";
+    counts.set(provider, (counts.get(provider) || 0) + 1);
+  }
+  if (!counts.size) {
+    container.style.display = "none";
+    select.innerHTML = "";
+    selectedBusProviders = new Set();
+    return;
+  }
+  const providers = [...counts.keys()].sort((a, b) => a.localeCompare(b, "de"));
+  // Auswahl auf noch vorhandene Anbieter beschränken.
+  selectedBusProviders = new Set([...selectedBusProviders].filter((p) => counts.has(p)));
+  select.innerHTML = "";
+  for (const provider of providers) {
+    const option = document.createElement("option");
+    option.value = provider;
+    option.textContent = `${provider} (${counts.get(provider)})`;
+    option.selected = selectedBusProviders.has(provider);
+    select.appendChild(option);
+  }
+  container.style.display = "block";
+}
 
 function getSelectedAreaCategories() {
   return [...areaLayerVisibility.entries()]
@@ -2364,6 +2411,7 @@ function renderAreaFeatures() {
   for (const feature of areaFeatures) {
     counts.set(feature.category, (counts.get(feature.category) || 0) + 1);
     if (!areaLayerVisibility.get(feature.category)) continue;
+    if (!isBusProviderSelected(feature)) continue;
     visibleCount += 1;
 
     const style = AREA_STYLE[feature.category];
@@ -3450,6 +3498,7 @@ function selectedAreaSplineFeaturesForExport() {
   const selected = areaFeatures.filter(
     (feature) => AREA_SPLINE_CATEGORIES.has(feature.category) &&
       areaLayerVisibility.get(feature.category) &&
+      isBusProviderSelected(feature) &&
       Array.isArray(feature.controlGeometry) &&
       feature.controlGeometry.length >= 2,
   );
@@ -3752,7 +3801,7 @@ function buildAreaPcgProps() {
 
 function buildAreaPythonExportPayload() {
   const selected = areaFeatures.filter(
-    (feature) => areaLayerVisibility.get(feature.category) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1,
+    (feature) => areaLayerVisibility.get(feature.category) && isBusProviderSelected(feature) && Array.isArray(feature.controlGeometry) && feature.controlGeometry.length >= 1,
   );
   if (!selected.length) return null;
   const transform = buildAreaExportTransform(selected);
@@ -6122,6 +6171,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
       detectedAreaTransitLines = areaCache.transitLines || [];
       if (areaFeatures.length) renderAreaFeatures();
       else renderAreaTransitLinesOnlyStatus();
+      populateBusProviderFilter();
       return true;
     }
     // Try localStorage cache so page reload doesn't re-query Overpass
@@ -6134,6 +6184,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
           detectedAreaTransitLines = stored.transitLines || [];
           if (areaFeatures.length) renderAreaFeatures();
           else renderAreaTransitLinesOnlyStatus();
+          populateBusProviderFilter();
           setStatus(`Aus localStorage geladen (${areaFeatures.length} Features).`);
           return true;
         }
@@ -6314,6 +6365,7 @@ async function importAreaFromOverpass(bounds = areaSelectionBounds) {
     }
     if (areaFeatures.length) renderAreaFeatures();
     else renderAreaTransitLinesOnlyStatus();
+    populateBusProviderFilter();
     return true;
   } catch (error) {
     hideCancelButton();
@@ -6563,6 +6615,13 @@ document.querySelectorAll("[data-area-layer]").forEach((input) => {
     const selectedLabels = getSelectedAreaCategories().map((category) => AREA_LAYER_LABELS[category]).join(", ");
     setStatus(selectedLabels ? `Auswahl für ersten OSM-Load: ${selectedLabels}` : "Mindestens einen Bereichs-Layer anhaken.", !selectedLabels);
   });
+});
+
+document.getElementById("bus-provider-select")?.addEventListener("change", (event) => {
+  selectedBusProviders = new Set(
+    [...event.target.selectedOptions].map((option) => option.value),
+  );
+  if (areaFeatures.length) renderAreaFeatures();
 });
 
 document.getElementById("btn-fit")?.addEventListener("click", () => {

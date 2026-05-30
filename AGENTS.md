@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.43 | 2026-05-30 21:12 +02:00 | Bus-Linien: (1) Provider-Filter (operator/network, z.B. BVG) als Multiselect unter Bus-Layer — filtert Fernbus/FlixBus & Reisebusse raus die als route=bus getaggt sind, generisch je Stadt. (2) Jede Bus-Linie traegt ihre Haltestellen als payload["StationsJson"] (Name+DistanceM, JSON-String) auf dem Actor — Parsing→Struct macht BP selbst. Area-Query laedt dafuer Route-Member-Nodes (node(r.routes)) nach. (3) Cleanup: toten LINE_STATIONS_JSON/line_stations_json Code von deepseek entfernt (wurde nie auf Actor geschrieben).
 - 0.1.42 | 2026-05-30 14:23 +02:00 | Datatable-Export: 50m Buffer bei Station-Filterung in buildDatatablePayloads, damit Stationen knapp außerhalb der geclippten Route-Intervalle nicht verloren gehen. Zusätzlich fallback auf areaSelectionBounds für stopInBounds-Check.
 - 0.1.41 | 2026-05-30 14:00 +02:00 | readableTrafficSign erkennt jetzt 40+ deutsche Verkehrszeichen-Codes (DE:283 Halteverbot, DE:286 eingeschr. Halteverbot, DE:306 Vorfahrtsstraße, DE:274 Tempo, DE:267 Einfahrt verboten, DE:325 Spielstraße, DE:220 Einbahnstraße, DE:350 Fußgängerüberweg, etc.).
 - 0.1.39 | 2026-05-30 13:51 +02:00 | Erweiterte PRIORITY_KEYS im Tooltip um alle Laternen-Tags (lamp_mount, light:method, light:colour, light:count, support, manufacturer, etc.) und Baum-Tags (taxon, dbh, start_date, leaf_colour, tree:height, crown:height/width).
