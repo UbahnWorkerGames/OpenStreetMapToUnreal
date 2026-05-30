@@ -17,8 +17,8 @@ const TRANSIT_ROUTE_MODES = {
   coach: { label: "Fernbus", category: "coach" },
 };
 
-const APP_VERSION = "0.1.43";
-const APP_VERSION_DATE = "2026-05-30 18:44 +02:00";
+const APP_VERSION = "0.1.42";
+const APP_VERSION_DATE = "2026-05-30 14:23 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -251,6 +251,7 @@ const AREA_FULL_WAY_SPLINE_CATEGORIES = new Set([
   "rail_train",
   "rail_subway",
   "bus",
+  "coach",
 ]);
 
 const AREA_PROP_CATEGORIES = new Set([
@@ -3066,7 +3067,6 @@ function exportToUnreal(buildOnly = false) {
       const stopLon = Number.isFinite(s.stopLon) ? s.stopLon : s.point[1];
       return {
         name: s.name,
-        key: stationExportKey(s.name),
         dist_m: +s.distAlongTrack.toFixed(2),
         order_idx_route_origin: namesByRoute.indexOf(s.name),
         order_idx_from_to: idxFromTo.get(s.name) ?? -1,
@@ -3105,39 +3105,6 @@ function exportToUnreal(buildOnly = false) {
   return payload;
 }
 
-const MAX_TRANSIT_ROUTE_POINTS = 3000;
-const MAX_TRANSIT_STATIONS = 100;
-
-function getTransitLineDataForExport() {
-  if (!masterStations || !masterStations.length) return null;
-  if (!lastLoadData?.ref) return null;
-  const uePayload = exportToUnreal(true);
-  if (!uePayload?.stations?.length) return null;
-  if ((uePayload.route?.points?.length || 0) > MAX_TRANSIT_ROUTE_POINTS) {
-    setStatus(`Linie zu lang für Python-Export (${uePayload.route.points.length} Route-Punkte, max ${MAX_TRANSIT_ROUTE_POINTS}).`, true);
-    return null;
-  }
-  if (uePayload.stations.length > MAX_TRANSIT_STATIONS) {
-    setStatus(`Zu viele Stationen fur Python-Export (${uePayload.stations.length}, max ${MAX_TRANSIT_STATIONS}).`, true);
-    return null;
-  }
-  return {
-    ref: lastLoadData.ref,
-    route_mode: lastLoadData.routeMode || "subway",
-    stations: uePayload.stations.map((s) => ({
-      name: s.name,
-      key: s.key || stationExportKey(s.name),
-      dist_m: s.dist_m,
-      location_cm: s.location_cm,
-      half_length_m: s.half_length_m,
-      level: s.level,
-    })),
-    route_points: (uePayload.route?.points || []).map((p) => ({
-      pos_cm: p.pos_cm,
-    })),
-  };
-}
-
 function exportMaster() {
   if (!masterStations) {
     setStatus("Keine Stationsdaten vorhanden.", true);
@@ -3152,12 +3119,10 @@ function exportMaster() {
     return;
   }
   const ref = lastLoadData?.ref || "?";
-  const routeMode = lastLoadData?.routeMode || "subway";
   const uePayload = exportToUnreal(true);
   const payload = {
     v: 4,
     ref,
-    route_mode: routeMode,
     controlPoints: ctrlPts.map((p) => [+p[0].toFixed(7), +p[1].toFixed(7)]),
     masterStations: masterStations.map((s) => ({
       name: s.name,
@@ -3175,7 +3140,7 @@ function exportMaster() {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `transit-line-${routeMode}-${ref}.json`;
+  a.download = `ubahn-master-${ref}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -4260,16 +4225,6 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
   const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
-  let transitLine = null;
-  try { transitLine = getTransitLineDataForExport(); } catch (e) { setStatus(`Transit-Daten fur Export nicht verfugbar: ${e.message}`, true); }
-  const lineStationsLiteral = transitLine
-    ? JSON.stringify(JSON.stringify(transitLine.stations))
-    : '"[]"';
-  const lineRouteLiteral = transitLine
-    ? JSON.stringify(JSON.stringify(transitLine.route_points))
-    : '"[]"';
-  const lineRefLiteral = JSON.stringify(transitLine?.ref || "");
-  const lineModeLiteral = JSON.stringify(transitLine?.route_mode || "");
   return `import json
 import re
 import os
@@ -4285,10 +4240,6 @@ PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
 GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
-LINE_STATIONS = json.loads(${lineStationsLiteral})
-LINE_ROUTE = json.loads(${lineRouteLiteral})
-LINE_REF = ${lineRefLiteral}
-LINE_MODE = ${lineModeLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
@@ -4866,22 +4817,6 @@ def _apply_map_texture(mesh_component):
     unreal.log("[INFO] Ground plane map texture applied")
 
 
-def _fill_struct_template(template, values):
-    """values: {pos: wert_string}"""
-    entries = re.findall(r'([\\w]+?)=("[^"]*"|[(][^)]*[)]|[-\\d.]+)', template)
-    parts = []
-    last_end = 0
-    for idx, m in enumerate(re.finditer(r'([\\w]+?)=("[^"]*"|[(][^)]*[)]|[-\\d.]+)', template)):
-        parts.append(template[last_end:m.start()])
-        if idx in values:
-            parts.append(f"{m.group(1)}={values[idx]}")
-        else:
-            parts.append(m.group(0))
-        last_end = m.end()
-    parts.append(template[last_end:])
-    return "".join(parts)
-
-
 def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
@@ -4907,38 +4842,6 @@ def main():
         create_prop_actor(prop_actor_class, row)
     _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
-
-    # Transit line stations auf den ersten Street-Actor schreiben
-    if LINE_STATIONS:
-        import json as _json
-        first_actor = next((a for a in unreal.EditorLevelLibrary.get_all_level_actors() if a.get_actor_label().startswith("CITY_STREET")), None)
-        if first_actor:
-            first_actor.modify()
-            arr = first_actor.get_editor_property("StationsData")
-            if arr is not None:
-                arr.resize(len(LINE_STATIONS))
-                for i, st in enumerate(LINE_STATIONS):
-                    name   = str(st.get("name", ""))
-                    key    = str(st.get("key", name))
-                    dist_m = float(st.get("dist_m", 0))
-                    pos    = st.get("location_cm", [0, 0, 0])
-                    half   = float(st.get("half_length_m", 20))
-                    level  = int(st.get("level", 0) or 0)
-                    template = arr[i].export_text()
-                    text = _fill_struct_template(template, {
-                        0: f'"{key}"',
-                        1: f'"{name}"',
-                        2: str(dist_m),
-                        3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
-                        4: str(half),
-                        5: str(level),
-                    })
-                    elem = arr[i]
-                    elem.import_text(text)
-                    arr[i] = elem
-                first_actor.set_editor_property("StationsData", arr)
-                first_actor.set_editor_property("StationsJson", _json.dumps(LINE_STATIONS))
-                unreal.log_warning(f"[TRANSIT] StationsData auf CITY_STREET-Actor: {len(LINE_STATIONS)} Stationen")
 
 
 main()
@@ -6460,14 +6363,17 @@ async function selectPostalCodeArea() {
   }
 }
 
-// Linie laden Button
-document.getElementById("btn-load-transit")?.addEventListener("click", async () => {
-  const ref = document.getElementById("transit-ref-input")?.value?.trim();
-  const mode = document.getElementById("transit-mode-select")?.value || "subway";
-  if (!ref) { setStatus("Linien-Nummer eingeben (z.B. U2, 002, M4).", true); return; }
-  setStatus(`Lade ${mode} ${ref} …`);
-  await importFromOverpass(ref, mode);
-});
+const select = document.getElementById("line-select");
+if (select) {
+  for (const line of LINES) {
+    const opt = document.createElement("option");
+    opt.value = line;
+    opt.textContent = line;
+    select.appendChild(opt);
+  }
+  select.value = "U8";
+  select.addEventListener("change", () => loadLine(select.value));
+}
 
 const datatableLineList = document.getElementById("datatable-line-list");
 if (datatableLineList) {
@@ -6479,7 +6385,6 @@ document.getElementById("datatable-line-all")?.addEventListener("change", (event
   }
   syncDatatableLineAllCheckbox();
 });
-// Linie laden Button — lädt die erste selektierte Linie von Overpass
 document.getElementById("btn-load-transit-line")?.addEventListener("click", async () => {
   const checked = [...document.querySelectorAll("#datatable-line-list input[data-datatable-line]:checked")];
   if (!checked.length) { setStatus("Erst eine Linie in der Export-Liste anhaken.", true); return; }
