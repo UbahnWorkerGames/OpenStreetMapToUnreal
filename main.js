@@ -4226,7 +4226,6 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
   const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
-  const lineStationsLiteral = payload?.line_stations_json ? JSON.stringify(payload.line_stations_json) : '"[]"'
   return `import json
 import re
 import os
@@ -4242,7 +4241,6 @@ PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
 GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
-LINE_STATIONS_JSON = ${lineStationsLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
@@ -5520,16 +5518,6 @@ async function exportAreaUnrealPython() {
     const bpPaths = getAreaBpPathsForExport();
     for (const [kind, path] of Object.entries(bpPaths)) setStoredAreaBpPath(kind, path);
     const groundPlaneImage = await captureMapImageForGroundPlane();
-    if (masterStations?.length && lastLoadData?.ref) {
-      const ue = exportToUnreal(true);
-      if (ue?.stations?.length) {
-        if (ue.stations.length > 200) {
-          setStatus(`Zu viele Stationen fur Python-Export (${ue.stations.length}). Bereich verkleinern oder andere Linie wahlen.`, true);
-        } else {
-          payload.line_stations_json = JSON.stringify(ue.stations);
-        }
-      }
-    }
     const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
