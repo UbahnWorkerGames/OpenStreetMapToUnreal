@@ -6490,17 +6490,14 @@ async function selectPostalCodeArea() {
   }
 }
 
-const select = document.getElementById("line-select");
-if (select) {
-  for (const line of LINES) {
-    const opt = document.createElement("option");
-    opt.value = line;
-    opt.textContent = line;
-    select.appendChild(opt);
-  }
-  select.value = "U8";
-  select.addEventListener("change", () => loadLine(select.value));
-}
+// Linie laden Button
+document.getElementById("btn-load-transit")?.addEventListener("click", async () => {
+  const ref = document.getElementById("transit-ref-input")?.value?.trim();
+  const mode = document.getElementById("transit-mode-select")?.value || "subway";
+  if (!ref) { setStatus("Linien-Nummer eingeben (z.B. U2, 002, M4).", true); return; }
+  setStatus(`Lade ${mode} ${ref} …`);
+  await importFromOverpass(ref, mode);
+});
 
 const datatableLineList = document.getElementById("datatable-line-list");
 if (datatableLineList) {
