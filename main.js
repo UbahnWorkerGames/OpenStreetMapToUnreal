@@ -4247,10 +4247,10 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   const transitLine = getTransitLineDataForExport();
   const lineStationsLiteral = transitLine
     ? JSON.stringify(JSON.stringify(transitLine.stations))
-    : "[]";
+    : '"[]"';
   const lineRouteLiteral = transitLine
     ? JSON.stringify(JSON.stringify(transitLine.route_points))
-    : "[]";
+    : '"[]"';
   const lineRefLiteral = JSON.stringify(transitLine?.ref || "");
   const lineModeLiteral = JSON.stringify(transitLine?.route_mode || "");
   return `import json
