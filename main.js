@@ -3105,11 +3105,22 @@ function exportToUnreal(buildOnly = false) {
   return payload;
 }
 
+const MAX_TRANSIT_ROUTE_POINTS = 3000;
+const MAX_TRANSIT_STATIONS = 100;
+
 function getTransitLineDataForExport() {
   if (!masterStations || !masterStations.length) return null;
   if (!lastLoadData?.ref) return null;
   const uePayload = exportToUnreal(true);
   if (!uePayload?.stations?.length) return null;
+  if ((uePayload.route?.points?.length || 0) > MAX_TRANSIT_ROUTE_POINTS) {
+    setStatus(`Linie zu lang für Python-Export (${uePayload.route.points.length} Route-Punkte, max ${MAX_TRANSIT_ROUTE_POINTS}).`, true);
+    return null;
+  }
+  if (uePayload.stations.length > MAX_TRANSIT_STATIONS) {
+    setStatus(`Zu viele Stationen fur Python-Export (${uePayload.stations.length}, max ${MAX_TRANSIT_STATIONS}).`, true);
+    return null;
+  }
   return {
     ref: lastLoadData.ref,
     route_mode: lastLoadData.routeMode || "subway",
@@ -4249,7 +4260,8 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
   const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
-  const transitLine = getTransitLineDataForExport();
+  let transitLine = null;
+  try { transitLine = getTransitLineDataForExport(); } catch (e) { setStatus(`Transit-Daten fur Export nicht verfugbar: ${e.message}`, true); }
   const lineStationsLiteral = transitLine
     ? JSON.stringify(JSON.stringify(transitLine.stations))
     : '"[]"';
