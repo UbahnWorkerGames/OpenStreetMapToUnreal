@@ -4210,7 +4210,7 @@ async function exportHeightmap() {
   }
 }
 
-function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage = null, lineData = null) {
+function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage = null) {
   const splines = Array.isArray(payload) ? payload : (payload?.splines || []);
   const buildings = Array.isArray(payload) ? [] : (payload?.buildings || []);
   const trees = Array.isArray(payload) ? [] : (payload?.trees || []);
@@ -4225,7 +4225,7 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
   const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
-  const lineDataLiteral = lineData ? JSON.stringify(JSON.stringify(lineData)) : '"[]"'
+  const lineStationsLiteral = payload?.line_stations_json ? JSON.stringify(payload.line_stations_json) : '"[]"'
   return `import json
 import re
 import os
@@ -4239,9 +4239,9 @@ BUILDINGS = json.loads(${buildingJsonLiteral})
 TREES = json.loads(${treeJsonLiteral})
 PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
-LINE_DATA = json.loads(${lineDataLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
 GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
+LINE_STATIONS = json.loads(${lineStationsLiteral})
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
@@ -4844,46 +4844,11 @@ def main():
         create_prop_actor(prop_actor_class, row)
     _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
-
-    # Transit line stations
-    if LINE_DATA:
-        import json as _json
-        transit_actor = None
-        for a in unreal.EditorLevelLibrary.get_all_level_actors():
-            if a.get_actor_label().startswith("CITY_STREET"):
-                transit_actor = a
-                break
-        if transit_actor:
-            transit_actor.modify()
-            arr = transit_actor.get_editor_property("StationsData")
-            if arr is not None and LINE_DATA:
-                arr.resize(len(LINE_DATA))
-                for i, st in enumerate(LINE_DATA):
-                    template = arr[i].export_text()
-                    # Positions-Fill: 0=Key,1=Name,2=Dist,3=WorldPos,4=PlatformHalf,5=Level
-                    import re as _re
-                    def _ft(tmpl, vals):
-                        pts = []
-                        le = 0
-                        for ix, m in enumerate(_re.finditer(r'([\\w]+?)=("[^"]*"|[(][^)]*[)]|[-\\d.]+)', tmpl)):
-                            pts.append(tmpl[le:m.start()])
-                            if ix in vals:
-                                pts.append(f"{m.group(1)}={vals[ix]}")
-                            else:
-                                pts.append(m.group(0))
-                            le = m.end()
-                        pts.append(tmpl[le:])
-                        return "".join(pts)
-                    n = str(st.get("name",""))
-                    k = str(st.get("key",n))
-                    p = st.get("location_cm",[0,0,0])
-                    txt = _ft(template,{0:f'"{k}"',1:f'"{n}"',2:str(st.get("dist_m",0)),3:f"(X={p[0]}.0,Y={p[1]}.0,Z={p[2]}.0)",4:str(st.get("half_length_m",20)),5:str(st.get("level",0)or 0)})
-                    e = arr[i]
-                    e.import_text(txt)
-                    arr[i] = e
-                transit_actor.set_editor_property("StationsData", arr)
-                transit_actor.set_editor_property("StationsJson", _json.dumps(LINE_DATA))
-                unreal.log_warning(f"[TRANSIT] {len(LINE_DATA)} Stationen auf CITY_STREET-Actor")
+    if LINE_STATIONS:
+        a = next((x for x in unreal.EditorLevelLibrary.get_all_level_actors() if x.get_actor_label().startswith("CITY_STREET")), None)
+        if a:
+            a.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
+            unreal.log_warning(f"[TRANSIT] StationsJson auf CITY_STREET-Actor: {len(LINE_STATIONS)} Stationen")
 
 main()
 `;
@@ -5558,18 +5523,17 @@ async function exportAreaUnrealPython() {
     const bpPaths = getAreaBpPathsForExport();
     for (const [kind, path] of Object.entries(bpPaths)) setStoredAreaBpPath(kind, path);
     const groundPlaneImage = await captureMapImageForGroundPlane();
-    let lineData = null;
     if (masterStations?.length && lastLoadData?.ref) {
       const ue = exportToUnreal(true);
       if (ue?.stations?.length) {
-        lineData = ue.stations.map((s) => ({
+        payload.line_stations_json = JSON.stringify(ue.stations.map((s) => ({
           name: s.name, key: s.key || stationExportKey(s.name),
           dist_m: s.dist_m, location_cm: s.location_cm,
-          half_length_m: s.half_length_m, level: s.level,
-        }));
+          half_length_m: s.half_length_m, level: s.level
+        })));
       }
     }
-    const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage, lineData);
+    const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage);
     showPythonCodeModal(code);
     const pointCount = payload.splines.reduce((sum, spline) => sum + spline.Points.length, 0);
     setStatus(`UE-Python-Code: ${payload.splines.length} Splines / ${pointCount} Punkte / ${payload.buildings.length} Gebäude / ${payload.trees.length} Bäume / ${payload.props.length} Props eingebettet`);
