@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.42";
-const APP_VERSION_DATE = "2026-05-30 14:23 +02:00";
+const APP_VERSION = "0.1.43";
+const APP_VERSION_DATE = "2026-05-30 18:35 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3061,6 +3061,7 @@ function exportToUnreal(buildOnly = false) {
       const stopLon = Number.isFinite(s.stopLon) ? s.stopLon : s.point[1];
       return {
         name: s.name,
+        key: stationExportKey(s.name),
         dist_m: +s.distAlongTrack.toFixed(2),
         order_idx_route_origin: namesByRoute.indexOf(s.name),
         order_idx_from_to: idxFromTo.get(s.name) ?? -1,
@@ -3113,10 +3114,12 @@ function exportMaster() {
     return;
   }
   const ref = lastLoadData?.ref || "?";
+  const routeMode = lastLoadData?.routeMode || "subway";
   const uePayload = exportToUnreal(true);
   const payload = {
     v: 4,
     ref,
+    route_mode: routeMode,
     controlPoints: ctrlPts.map((p) => [+p[0].toFixed(7), +p[1].toFixed(7)]),
     masterStations: masterStations.map((s) => ({
       name: s.name,
@@ -3134,7 +3137,7 @@ function exportMaster() {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `ubahn-master-${ref}.json`;
+  a.download = `transit-line-${routeMode}-${ref}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
