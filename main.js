@@ -410,6 +410,21 @@ function setSelectedAreaCategories(categories) {
   });
 }
 
+function toggleAllAreaLayers() {
+  const inputs = [...document.querySelectorAll("[data-area-layer]")];
+  const allChecked = inputs.length > 0 && inputs.every((input) => input.checked);
+  const newState = !allChecked;
+  inputs.forEach((input) => { input.checked = newState; });
+  for (const key of areaLayerVisibility.keys()) areaLayerVisibility.set(key, newState);
+  const btn = document.getElementById("btn-area-toggle-all");
+  if (btn) btn.textContent = newState ? "Keine" : "Alle";
+  if (areaFeatures.length) {
+    renderAreaFeatures();
+  } else {
+    setStatus(newState ? "Alle Layer aktiviert." : "Alle Layer deaktiviert.", !newState);
+  }
+}
+
 function resetAreaLayersKeepBounds() {
   setSelectedAreaCategories([]);
   areaFeatures = [];
@@ -6454,6 +6469,7 @@ document.getElementById("btn-area-select")?.addEventListener("click", () => {
 document.getElementById("btn-area-load")?.addEventListener("click", () => importAreaFromOverpass());
 document.getElementById("btn-area-cancel")?.addEventListener("click", cancelAreaLoad);
 document.getElementById("btn-area-reset-layers")?.addEventListener("click", resetAreaLayersKeepBounds);
+document.getElementById("btn-area-toggle-all")?.addEventListener("click", toggleAllAreaLayers);
 document.getElementById("btn-area-save-selection")?.addEventListener("click", saveCurrentAreaSelection);
 document.getElementById("btn-area-delete-selection")?.addEventListener("click", deleteSavedAreaSelection);
 document.getElementById("area-selection-preset")?.addEventListener("change", (event) => {
