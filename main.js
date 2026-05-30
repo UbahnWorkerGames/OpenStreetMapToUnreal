@@ -4849,89 +4849,6 @@ def _apply_map_texture(mesh_component):
     unreal.log("[INFO] Ground plane map texture applied")
 
 
-LINE_TEMPLATE_BP = "/Game/_UbahnWorkerGames/TEST/BP_CityTest"
-def _fill_struct_template(template, values):
-    """values: {pos: wert_string}"""
-    entries = re.findall(r'([\w]+?)=("[^"]*"|[(][^)]*[)]|[-\d.]+)', template)
-    parts = []
-    last_end = 0
-    for idx, m in enumerate(re.finditer(r'([\w]+?)=("[^"]*"|[(][^)]*[)]|[-\d.]+)', template)):
-        parts.append(template[last_end:m.start()])
-        if idx in values:
-            parts.append(f"{m.group(1)}={values[idx]}")
-        else:
-            parts.append(m.group(0))
-        last_end = m.end()
-    parts.append(template[last_end:])
-    return "".join(parts)
-
-def _create_transit_bp():
-    unreal.log_warning(f"[TRANSIT] LINE_STATIONS={len(LINE_STATIONS)}, LINE_ROUTE={len(LINE_ROUTE)}, MODE={LINE_MODE}, REF={LINE_REF}")
-    if not LINE_STATIONS:
-        unreal.log_warning("[TRANSIT] Keine Stationsdaten - uberspringe")
-        return
-
-    label = f"TRANSIT_{LINE_MODE}_{LINE_REF}"
-    # Alte Instanzen loschen
-    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
-        if actor.get_actor_label().startswith("TRANSIT_"):
-            unreal.EditorLevelLibrary.destroy_actor(actor)
-
-    # BP-Klasse laden — exakt wie im Test-Script
-    bp_asset = unreal.load_asset(LINE_TEMPLATE_BP)
-    bp_class = bp_asset.generated_class()
-    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(bp_class, unreal.Vector(0, 0, 500))
-    actor.set_actor_label(label)
-
-    # Spline
-    spline_comp = None
-    for comp in actor.get_components_by_class(unreal.SplineComponent):
-        if comp.get_name() in ("StreetSpline", "Spline"):
-            spline_comp = comp
-            break
-    if not spline_comp:
-        comps = actor.get_components_by_class(unreal.SplineComponent)
-        if comps:
-            spline_comp = comps[0]
-    if spline_comp and LINE_ROUTE:
-        spline_comp.clear_spline_points(True)
-        for pt in LINE_ROUTE:
-            pos = pt.get("pos_cm", [0, 0, 0])
-            spline_comp.add_spline_point(
-                unreal.Vector(float(pos[0]), float(pos[1]), float(pos[2])),
-                unreal.SplineCoordinateSpace.LOCAL, True
-            )
-        unreal.log_warning(f"[TRANSIT] Spline: {len(LINE_ROUTE)} Punkte")
-
-    # StationsData direkt setzen (wie im Test-Script)
-    arr = actor.get_editor_property("StationsData")
-    if arr is not None and len(LINE_STATIONS) > 0:
-        arr.resize(len(LINE_STATIONS))
-        for i, st in enumerate(LINE_STATIONS):
-            name   = str(st.get("name", ""))
-            key    = str(st.get("key", name))
-            dist_m = float(st.get("dist_m", 0))
-            pos    = st.get("location_cm", [0, 0, 0])
-            half   = float(st.get("half_length_m", 20))
-            level  = int(st.get("level", 0) or 0)
-            template = arr[i].export_text()
-            text = _fill_struct_template(template, {
-                0: f'"{key}"',
-                1: f'"{name}"',
-                2: str(dist_m),
-                3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
-                4: str(half),
-                5: str(level),
-            })
-            elem = arr[i]
-            elem.import_text(text)
-            arr[i] = elem
-        actor.set_editor_property("StationsData", arr)
-        import json
-        actor.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
-        unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
-
-
 def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
@@ -4958,8 +4875,35 @@ def main():
     _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
 
+    # Transit line stations auf den ersten Street-Actor schreiben
+    if LINE_STATIONS:
+        first_actor = next((a for a in unreal.EditorLevelLibrary.get_all_level_actors() if a.get_actor_label().startswith("CITY_STREET")), None)
+        if first_actor:
+            arr = first_actor.get_editor_property("StationsData")
+            if arr is not None:
+                arr.resize(len(LINE_STATIONS))
+                for i, st in enumerate(LINE_STATIONS):
+                    name   = str(st.get("name", ""))
+                    key    = str(st.get("key", name))
+                    dist_m = float(st.get("dist_m", 0))
+                    pos    = st.get("location_cm", [0, 0, 0])
+                    half   = float(st.get("half_length_m", 20))
+                    level  = int(st.get("level", 0) or 0)
+                    template = arr[i].export_text()
+                    text = _fill_struct_template(template, {
+                        0: f'"{key}"',
+                        1: f'"{name}"',
+                        2: str(dist_m),
+                        3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
+                        4: str(half),
+                        5: str(level),
+                    })
+                    elem = arr[i]
+                    elem.import_text(text)
+                    arr[i] = elem
+                first_actor.set_editor_property("StationsData", arr)
+                unreal.log_warning(f"[TRANSIT] StationsData auf CITY_STREET-Actor: {len(LINE_STATIONS)} Stationen")
 
-    _create_transit_bp()
 
 main()
 `;
