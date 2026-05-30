@@ -14,6 +14,7 @@ const TRANSIT_ROUTE_MODES = {
   train: { label: "Bahn", category: "rail_train" },
   light_rail: { label: "Light Rail", category: "rail_train" },
   bus: { label: "Bus", category: "bus" },
+  coach: { label: "Fernbus", category: "coach" },
 };
 
 const APP_VERSION = "0.1.43";
@@ -114,6 +115,7 @@ const DEFAULT_AREA_BP_PATHS = {
   tram: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   train: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   bus: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
+  coach: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   street: "/Game/_UbahnWorkerGames/TEST/BP_CityTest.BP_CityTest",
   building: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
   tree: "/Game/_UbahnWorkerGames/TEST/BP_BuildingCube.BP_BuildingCube",
@@ -152,6 +154,7 @@ const AREA_STYLE = {
   rail_train: { color: "#7c3aed", weight: 3 },
   rail_subway: { color: "#2563eb", weight: 3 },
   bus: { color: "#0891b2", weight: 2.5 },
+  coach: { color: "#0d9488", weight: 2.5 },
   building: { color: "#64748b", weight: 1.2 },
   building_3d: { color: "#f97316", weight: 1.5 },
   tree: { color: "#15803d", weight: 2 },
@@ -220,6 +223,7 @@ const AREA_SPLINE_CATEGORIES = new Set([
   "rail_train",
   "rail_subway",
   "bus",
+  "coach",
   "waterway",
   "water_area",
   "forest",
@@ -324,6 +328,7 @@ const AREA_LAYER_LABELS = {
   rail_train: "Zug",
   rail_subway: "U-Bahn",
   bus: "Bus",
+  coach: "Fernbus",
   building: "Gebäude",
   building_3d: "3D-Dach",
   tree: "Bäume",
