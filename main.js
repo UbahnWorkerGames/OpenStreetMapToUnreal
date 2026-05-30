@@ -4931,7 +4931,14 @@ def _create_transit_bp():
         actor.set_editor_property("StationsData", arr)
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
-    unreal.log_warning(f"[TRANSIT] Fertig: {label}")
+        # Auch StationsJson setzen falls Construction Script das braucht
+        import json
+        stations_json = json.dumps(LINE_STATIONS)
+        actor.set_editor_property("StationsJson", stations_json)
+
+        # Verify
+        verify = actor.get_editor_property("StationsData")
+        unreal.log_warning(f"[TRANSIT] Verify nach Set: {len(verify) if verify is not None and verify else 0}")
 
 
 def main():
