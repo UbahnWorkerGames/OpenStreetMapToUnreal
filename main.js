@@ -3067,6 +3067,7 @@ function exportToUnreal(buildOnly = false) {
       const stopLon = Number.isFinite(s.stopLon) ? s.stopLon : s.point[1];
       return {
         name: s.name,
+        key: stationExportKey(s.name),
         dist_m: +s.distAlongTrack.toFixed(2),
         order_idx_route_origin: namesByRoute.indexOf(s.name),
         order_idx_from_to: idxFromTo.get(s.name) ?? -1,
@@ -5521,7 +5522,13 @@ async function exportAreaUnrealPython() {
     const groundPlaneImage = await captureMapImageForGroundPlane();
     if (masterStations?.length && lastLoadData?.ref) {
       const ue = exportToUnreal(true);
-      if (ue?.stations?.length) payload.line_stations_json = JSON.stringify(ue.stations);
+      if (ue?.stations?.length) {
+        if (ue.stations.length > 200) {
+          setStatus(`Zu viele Stationen fur Python-Export (${ue.stations.length}). Bereich verkleinern oder andere Linie wahlen.`, true);
+        } else {
+          payload.line_stations_json = JSON.stringify(ue.stations);
+        }
+      }
     }
     const code = buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage);
     showPythonCodeModal(code);
