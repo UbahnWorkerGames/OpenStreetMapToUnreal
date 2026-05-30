@@ -17,7 +17,7 @@ const TRANSIT_ROUTE_MODES = {
 };
 
 const APP_VERSION = "0.1.43";
-const APP_VERSION_DATE = "2026-05-30 18:35 +02:00";
+const APP_VERSION_DATE = "2026-05-30 18:44 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -3100,6 +3100,28 @@ function exportToUnreal(buildOnly = false) {
   return payload;
 }
 
+function getTransitLineDataForExport() {
+  if (!masterStations || !masterStations.length) return null;
+  if (!lastLoadData?.ref) return null;
+  const uePayload = exportToUnreal(true);
+  if (!uePayload?.stations?.length) return null;
+  return {
+    ref: lastLoadData.ref,
+    route_mode: lastLoadData.routeMode || "subway",
+    stations: uePayload.stations.map((s) => ({
+      name: s.name,
+      key: s.key || stationExportKey(s.name),
+      dist_m: s.dist_m,
+      location_cm: s.location_cm,
+      half_length_m: s.half_length_m,
+      level: s.level,
+    })),
+    route_points: (uePayload.route?.points || []).map((p) => ({
+      pos_cm: p.pos_cm,
+    })),
+  };
+}
+
 function exportMaster() {
   if (!masterStations) {
     setStatus("Keine Stationsdaten vorhanden.", true);
@@ -4222,6 +4244,15 @@ function buildCompactAreaUnrealPythonScript(payload, bpPaths, groundPlaneImage =
   }));
   const extentLiteral = JSON.stringify(JSON.stringify(payload?.extent_cm || null));
   const groundImageLiteral = groundPlaneImage ? JSON.stringify(groundPlaneImage) : "\"\"";
+  const transitLine = getTransitLineDataForExport();
+  const lineStationsLiteral = transitLine
+    ? JSON.stringify(JSON.stringify(transitLine.stations))
+    : "[]";
+  const lineRouteLiteral = transitLine
+    ? JSON.stringify(JSON.stringify(transitLine.route_points))
+    : "[]";
+  const lineRefLiteral = JSON.stringify(transitLine?.ref || "");
+  const lineModeLiteral = JSON.stringify(transitLine?.route_mode || "");
   return `import json
 import re
 import os
@@ -4237,6 +4268,10 @@ PROPS = json.loads(${propJsonLiteral})
 BP_PATHS = json.loads(${bpPathsLiteral})
 GROUND_PLANE_EXTENT = json.loads(${extentLiteral})
 GROUND_PLANE_IMAGE_B64 = ${groundImageLiteral}
+LINE_STATIONS = json.loads(${lineStationsLiteral})
+LINE_ROUTE = json.loads(${lineRouteLiteral})
+LINE_REF = ${lineRefLiteral}
+LINE_MODE = ${lineModeLiteral}
 ACTOR_LABEL_PREFIX = "CITY_STREET"
 BUILDING_ACTOR_LABEL_PREFIX = "OSM_BUILDING"
 TREE_ACTOR_LABEL_PREFIX = "OSM_TREE"
@@ -4814,6 +4849,93 @@ def _apply_map_texture(mesh_component):
     unreal.log("[INFO] Ground plane map texture applied")
 
 
+LINE_TEMPLATE_BP = "/Game/_UbahnWorkerGames/TEST/BP_CityTest"
+LINE_OUTPUT_BASE = "/Game/_UbahnWorkerGames/Transit"
+
+def _fill_struct_template(template, values):
+    """values: {pos: wert_string}"""
+    entries = re.findall(r'([\\w]+?)=("[^"]*"|\\([^)]*\\)|[\\-\\d.]+)', template)
+    parts = []
+    last_end = 0
+    for idx, m in enumerate(re.finditer(r'([\\w]+?)=("[^"]*"|\\([^)]*\\)|[\\-\\d.]+)', template)):
+        parts.append(template[last_end:m.start()])
+        if idx in values:
+            parts.append(f"{m.group(1)}={values[idx]}")
+        else:
+            parts.append(m.group(0))
+        last_end = m.end()
+    parts.append(template[last_end:])
+    return "".join(parts)
+
+
+def _create_transit_bp():
+    if not LINE_STATIONS:
+        return
+    output_path = f"{LINE_OUTPUT_BASE}/{LINE_MODE.upper()}/{LINE_REF}/BP_{LINE_REF}"
+    unreal.log_warning(f"[TRANSIT] Erstelle {output_path}")
+
+    if unreal.EditorAssetLibrary.does_asset_exist(output_path):
+        unreal.EditorAssetLibrary.delete_asset(output_path)
+
+    unreal.EditorAssetLibrary.duplicate_asset(LINE_TEMPLATE_BP, output_path)
+    new_bp = unreal.load_asset(output_path)
+    if not new_bp:
+        unreal.log_error(f"[TRANSIT] Konnte BP nicht laden: {output_path}")
+        return
+
+    cdo = unreal.get_default_object(new_bp.generated_class())
+
+    # Spline
+    spline_comp = None
+    for comp in cdo.get_components_by_class(unreal.SplineComponent):
+        if comp.get_name() in ("StreetSpline", "Spline"):
+            spline_comp = comp
+            break
+    if not spline_comp:
+        comps = cdo.get_components_by_class(unreal.SplineComponent)
+        if comps:
+            spline_comp = comps[0]
+    if spline_comp and LINE_ROUTE:
+        spline_comp.clear_spline_points(True)
+        for pt in LINE_ROUTE:
+            pos = pt.get("pos_cm", [0, 0, 0])
+            spline_comp.add_spline_point(
+                unreal.Vector(float(pos[0]), float(pos[1]), float(pos[2])),
+                unreal.SplineCoordinateSpace.LOCAL, True
+            )
+        unreal.log_warning(f"[TRANSIT] Spline: {len(LINE_ROUTE)} Punkte")
+
+    # StationsData
+    arr = cdo.get_editor_property("StationsData")
+    if arr is not None:
+        arr.resize(len(LINE_STATIONS))
+        for i, st in enumerate(LINE_STATIONS):
+            name   = str(st.get("name", ""))
+            key    = str(st.get("key", name))
+            dist_m = float(st.get("dist_m", 0))
+            pos    = st.get("location_cm", [0, 0, 0])
+            half   = float(st.get("half_length_m", 20))
+            level  = int(st.get("level", 0) or 0)
+
+            template = arr[i].export_text()
+            text = _fill_struct_template(template, {
+                0: f'"{key}"',
+                1: f'"{name}"',
+                2: str(dist_m),
+                3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
+                4: str(half),
+                5: str(level),
+            })
+            elem = arr[i]
+            elem.import_text(text)
+            arr[i] = elem
+        cdo.set_editor_property("StationsData", arr)
+        unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
+
+    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
+    unreal.log_warning(f"[TRANSIT] Fertig: {output_path}")
+
+
 def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
@@ -4840,6 +4962,8 @@ def main():
     _create_ground_plane()
     unreal.log(f"[INFO] Imported {len(rows)} city street splines from {point_count} points, {len(BUILDINGS)} buildings, {len(TREES)} trees and {len(PROPS)} props")
 
+
+    _create_transit_bp()
 
 main()
 `;
