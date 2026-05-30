@@ -4854,10 +4854,10 @@ LINE_OUTPUT_BASE = "/Game/_UbahnWorkerGames/Transit"
 
 def _fill_struct_template(template, values):
     """values: {pos: wert_string}"""
-    entries = re.findall(r'([\\w]+?)=("[^"]*"|\\([^)]*\\)|[\\-\\d.]+)', template)
+    entries = re.findall(r'([\w]+?)=("[^"]*"|[(][^)]*[)]|[-\d.]+)', template)
     parts = []
     last_end = 0
-    for idx, m in enumerate(re.finditer(r'([\\w]+?)=("[^"]*"|\\([^)]*\\)|[\\-\\d.]+)', template)):
+    for idx, m in enumerate(re.finditer(r'([\w]+?)=("[^"]*"|[(][^)]*[)]|[-\d.]+)', template)):
         parts.append(template[last_end:m.start()])
         if idx in values:
             parts.append(f"{m.group(1)}={values[idx]}")
@@ -4866,7 +4866,6 @@ def _fill_struct_template(template, values):
         last_end = m.end()
     parts.append(template[last_end:])
     return "".join(parts)
-
 
 def _create_transit_bp():
     if not LINE_STATIONS:
