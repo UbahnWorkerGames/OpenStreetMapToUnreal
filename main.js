@@ -4868,7 +4868,9 @@ def _fill_struct_template(template, values):
     return "".join(parts)
 
 def _create_transit_bp():
+    unreal.log_warning(f"[TRANSIT] LINE_STATIONS={len(LINE_STATIONS)}, LINE_ROUTE={len(LINE_ROUTE)}, MODE={LINE_MODE}, REF={LINE_REF}")
     if not LINE_STATIONS:
+        unreal.log_warning("[TRANSIT] Keine Stationsdaten - überspringe")
         return
     output_path = f"{LINE_OUTPUT_BASE}/{LINE_MODE.upper()}/{LINE_REF}/BP_{LINE_REF}"
     unreal.log_warning(f"[TRANSIT] Erstelle {output_path}")
@@ -4876,13 +4878,19 @@ def _create_transit_bp():
     if unreal.EditorAssetLibrary.does_asset_exist(output_path):
         unreal.EditorAssetLibrary.delete_asset(output_path)
 
+    # Ordner anlegen falls nötig
+    folder = "/".join(output_path.split("/")[:-1])
+    unreal.EditorAssetLibrary.make_directory(folder)
+
     unreal.EditorAssetLibrary.duplicate_asset(LINE_TEMPLATE_BP, output_path)
     new_bp = unreal.load_asset(output_path)
     if not new_bp:
         unreal.log_error(f"[TRANSIT] Konnte BP nicht laden: {output_path}")
         return
 
-    cdo = unreal.get_default_object(new_bp.generated_class())
+    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)  # force compile
+    bp_class = new_bp.generated_class()
+    cdo = unreal.get_default_object(bp_class)
 
     # Spline
     spline_comp = None
@@ -4906,7 +4914,9 @@ def _create_transit_bp():
 
     # StationsData
     arr = cdo.get_editor_property("StationsData")
-    if arr is not None:
+    unreal.log_warning(f"[TRANSIT] StationsData CDO: {type(arr).__name__ if arr else 'None'} LEN={len(arr) if arr else 0}")
+    if arr is not None and len(LINE_STATIONS) > 0:
+        cdo.modify()
         arr.resize(len(LINE_STATIONS))
         for i, st in enumerate(LINE_STATIONS):
             name   = str(st.get("name", ""))
@@ -4931,6 +4941,9 @@ def _create_transit_bp():
         cdo.set_editor_property("StationsData", arr)
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
+    # Verify after save
+    verify = unreal.get_default_object(new_bp.generated_class()).get_editor_property("StationsData")
+    unreal.log_warning(f"[TRANSIT] Nach Save: StationsData LEN={len(verify) if verify else 0}")
     unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
     unreal.log_warning(f"[TRANSIT] Fertig: {output_path}")
 
