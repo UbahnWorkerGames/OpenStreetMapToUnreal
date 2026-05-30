@@ -4940,6 +4940,8 @@ def _create_transit_bp():
         cdo.set_editor_property("StationsData", arr)
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
+    # CDO → Blueprint class defaults übertragen
+    unreal.BlueprintEditorLibrary.compile_blueprint(new_bp)
     unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
     # Verify
     verify = unreal.get_default_object(new_bp.generated_class()).get_editor_property("StationsData")
