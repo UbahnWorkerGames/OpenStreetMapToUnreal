@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.39";
-const APP_VERSION_DATE = "2026-05-30 13:51 +02:00";
+const APP_VERSION = "0.1.41";
+const APP_VERSION_DATE = "2026-05-30 14:00 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -1446,7 +1446,7 @@ function classifyAreaWay(tags = {}) {
 function classifyAreaNode(tags = {}) {
   if (tags.natural === "tree") return "tree";
   if (tags.highway === "traffic_signals") return "traffic_signal";
-  if (hasTrafficSignTag(tags) || tags.highway === "stop" || tags.highway === "give_way" || tags.highway === "milestone" || tags.tourism === "information") {
+  if (hasTrafficSignTag(tags) || tags.maxspeed || tags.highway === "stop" || tags.highway === "give_way" || tags.highway === "milestone" || tags.tourism === "information") {
     return "traffic_sign_node";
   }
   if (["restaurant", "cafe", "fast_food", "bar", "pub", "food_court"].includes(tags.amenity)) return "amenity_food";
@@ -1529,6 +1529,7 @@ function areaOverpassFilterForCategory(category) {
         'node["tourism"="information"]["information"~"^(guidepost|map|board)$"]',
         'node["direction"]',
         'node["destination"]',
+        'node["maxspeed"]',
       ];
     case "amenity_food":
       return 'node["amenity"~"^(restaurant|cafe|fast_food|bar|pub|food_court)$"]';
@@ -2243,7 +2244,8 @@ function buildAreaFeatureTooltip(feature) {
     "width", "lanes", "maxspeed", "oneway", "bridge", "tunnel", "layer",
     "ref", "operator",
     "addr:street", "addr:housenumber", "addr:city", "addr:postcode",
-    "traffic_sign", "lamp_type", "lamp_mount", "light:method", "light:colour",
+    "traffic_sign", "maxspeed", "direction",
+    "lamp_type", "lamp_mount", "light:method", "light:colour",
     "light:count", "light:direction", "light:flux", "lamp_model", "light_source",
     "support", "lit", "lit_by", "manufacturer", "material", "colour",
     "tree", "tree:ref", "taxon", "dbh", "start_date", "leaf_colour",
@@ -2290,6 +2292,21 @@ function normalizeOverpassGeometry(geometry) {
     .filter(Boolean);
 }
 
+function parseOsmDirection(value) {
+  if (value == null || value === "") return null;
+  const CARDINAL = {
+    N: 0, NNE: 22.5, NE: 45, ENE: 67.5,
+    E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
+    S: 180, SSW: 202.5, SW: 225, WSW: 247.5,
+    W: 270, WNW: 292.5, NW: 315, NNW: 337.5,
+  };
+  const upper = String(value).trim().toUpperCase();
+  if (CARDINAL[upper] != null) return CARDINAL[upper];
+  const num = Number.parseFloat(value);
+  if (Number.isFinite(num)) return ((num % 360) + 360) % 360;
+  return null;
+}
+
 function renderAreaFeatures() {
   areaRawLayer.clearLayers();
   areaProcessedLayer.clearLayers();
@@ -2303,6 +2320,19 @@ function renderAreaFeatures() {
 
     const style = AREA_STYLE[feature.category];
     if (feature.shape === "point") {
+      const cat = feature.category;
+      const directionDeg = parseOsmDirection(feature.tags?.direction);
+      if (cat === "street_lamp" && directionDeg != null) {
+        const color = style.color;
+        const icon = L.divIcon({
+          className: "osm-direction-marker",
+          html: `<svg width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${directionDeg}deg)"><polygon points="8,1 13,13 8,10 3,13" fill="${color}" stroke="#fff" stroke-width="1" opacity="0.9"/></svg>`,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+        });
+        L.marker(feature.controlGeometry[0], { icon }).bindTooltip(buildAreaFeatureTooltip(feature)).addTo(areaProcessedLayer);
+        continue;
+      }
       L.circleMarker(feature.controlGeometry[0], {
         radius: ["traffic_signal", "traffic_sign_node", "street_lamp"].includes(feature.category) ? 6 : 4,
         color: style.color,
@@ -3175,16 +3205,70 @@ function readableTrafficSign(tags = {}) {
   if (tags.highway === "stop") return "Stopschild";
   if (tags.highway === "give_way") return "Vorfahrt gewaehren";
   if (tags.highway === "milestone") return "Kilometerschild";
+  if (tags.maxspeed) return `Tempo ${tags.maxspeed}`;
   if (tags.tourism === "information") return tags.information ? `Infoschild ${tags.information}` : "Infoschild";
   if (tags.destination) return `Wegweiser ${tags.destination}`;
   const value = firstTrafficSignValue(tags);
   if (!value) return "Verkehrsschild";
   const normalized = String(value).toLowerCase();
+  // Numeric DE codes
+  if (normalized.includes("283") && !normalized.includes("283.1")) return "Halteverbot (absolut)";
+  if (normalized.includes("283.1")) return "Halteverbot Anfang";
+  if (normalized.includes("286") && !normalized.includes("286.1")) return "Halteverbot (eingeschraenkt)";
+  if (normalized.includes("286.1")) return "Eingeschr. Halteverbot Anfang";
+  if (normalized.includes("306")) return "Vorfahrtsstrasse";
+  if (normalized.includes("301")) return "Vorfahrt";
+  if (normalized.includes("308")) return "Vorrang Gegenverkehr";
+  if (normalized.includes("208")) return "Gegenverkehr Vorrang";
+  if (normalized.includes("314.1")) return "Parkhaus";
+  if (normalized.includes("314")) return "Parkplatz";
+  if (normalized.includes("357")) return "Sackgasse";
+  if (normalized.includes("350")) return "Fussgaengerueberweg";
+  if (normalized.includes("209")) return "Vorgeschriebene Fahrtrichtung";
+  if (normalized.includes("211")) return "Vorgeschriebene Vorbeifahrt";
+  if (normalized.includes("220")) return "Einbahnstrasse";
+  if (normalized.includes("222")) return "Vorgeschriebene Vorbeifahrt";
+  if (normalized.includes("237")) return "Radweg";
+  if (normalized.includes("239")) return "Gehweg";
+  if (normalized.includes("240")) return "Gemeinsamer Geh-/Radweg";
+  if (normalized.includes("241")) return "Getrennter Geh-/Radweg";
+  if (normalized.includes("250")) return "Durchfahrt verboten";
+  if (normalized.includes("253")) return "LKW verboten";
+  if (normalized.includes("254")) return "Fahrrad verboten";
+  if (normalized.includes("255")) return "Motorrad verboten";
+  if (normalized.includes("259")) return "Fussgaenger verboten";
+  if (normalized.includes("260")) return "Kraftfahrzeuge verboten";
+  if (normalized.includes("262")) return "Gewichtsbegrenzung";
+  if (normalized.includes("267")) return "Einfahrt verboten";
+  if (normalized.includes("269")) return "Wasserschutzgebiet";
+  if (normalized.includes("274.1")) return `Tempo-30-Zone`;
+  if (normalized.includes("274.2")) return `Tempo-30-Zone Ende`;
+  if (normalized.includes("274")) return `Tempo ${value}`;
+  if (normalized.includes("277")) return "Ueberholverbot";
+  if (normalized.includes("278")) return "Ueberholverbot Ende";
+  if (normalized.includes("279")) return "Ueberholverbot LKW";
+  if (normalized.includes("294")) return "Nebel";
+  if (normalized.includes("310")) return "Ortstafel";
+  if (normalized.includes("311")) return "Ortstafel Ende";
+  if (normalized.includes("325")) return "Spielstrasse";
+  if (normalized.includes("331")) return "Kraftfahrstrasse";
+  if (normalized.includes("354")) return "Wasserschutzgebiet";
+  if (normalized.includes("356")) return "Umleitung";
+  if (normalized.includes("386")) return "Touristischer Hinweis";
+  if (normalized.includes("388")) return "Seitenstreifen befahren";
+  if (normalized.includes("390")) return "Mautpflicht";
+  if (normalized.includes("393")) return "Umweltzone";
+  if (normalized.includes("448")) return "Anlieger frei";
+  if (normalized.includes("454")) return "Umleitung";
+  // Text-based
   if (normalized.includes("stop") || normalized.includes("206")) return "Stopschild";
   if (normalized.includes("give_way") || normalized.includes("205")) return "Vorfahrt gewaehren";
   if (normalized.includes("city_limit")) return "Ortsschild";
-  if (normalized.includes("maxspeed") || normalized.includes("274")) return "Temposchild";
-  if (normalized.includes("no_entry") || normalized.includes("267")) return "Einfahrt verboten";
+  if (normalized.includes("no_entry")) return "Einfahrt verboten";
+  if (normalized.includes("no_parking") || normalized.includes("no_stopping")) return "Halteverbot";
+  if (normalized.includes("priority")) return "Vorfahrtsstrasse";
+  if (normalized.includes("living_street")) return "Spielstrasse";
+  if (normalized.includes("oneway")) return "Einbahnstrasse";
   return `Verkehrsschild ${value}`;
 }
 
