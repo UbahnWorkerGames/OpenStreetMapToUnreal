@@ -4877,10 +4877,9 @@ def _create_transit_bp():
         if actor.get_actor_label().startswith("TRANSIT_"):
             unreal.EditorLevelLibrary.destroy_actor(actor)
 
-    # Spawn wie die Street-Splines
-    bp_class = unreal.EditorAssetLibrary.load_blueprint_class(LINE_TEMPLATE_BP)
-    if not bp_class:
-        bp_class = unreal.load_class(LINE_TEMPLATE_BP)
+    # BP-Klasse laden — exakt wie im Test-Script
+    bp_asset = unreal.load_asset(LINE_TEMPLATE_BP)
+    bp_class = bp_asset.generated_class()
     actor = unreal.EditorLevelLibrary.spawn_actor_from_class(bp_class, unreal.Vector(0, 0, 500))
     actor.set_actor_label(label)
 
@@ -4904,10 +4903,33 @@ def _create_transit_bp():
             )
         unreal.log_warning(f"[TRANSIT] Spline: {len(LINE_ROUTE)} Punkte")
 
-    # StationsJson setzen — Construction Script baut daraus StationsData
-    import json
-    actor.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
-    unreal.log_warning(f"[TRANSIT] StationsJson: {len(LINE_STATIONS)} Stationen")
+    # StationsData direkt setzen (wie im Test-Script)
+    arr = actor.get_editor_property("StationsData")
+    if arr is not None and len(LINE_STATIONS) > 0:
+        arr.resize(len(LINE_STATIONS))
+        for i, st in enumerate(LINE_STATIONS):
+            name   = str(st.get("name", ""))
+            key    = str(st.get("key", name))
+            dist_m = float(st.get("dist_m", 0))
+            pos    = st.get("location_cm", [0, 0, 0])
+            half   = float(st.get("half_length_m", 20))
+            level  = int(st.get("level", 0) or 0)
+            template = arr[i].export_text()
+            text = _fill_struct_template(template, {
+                0: f'"{key}"',
+                1: f'"{name}"',
+                2: str(dist_m),
+                3: f"(X={pos[0]}.0,Y={pos[1]}.0,Z={pos[2]}.0)",
+                4: str(half),
+                5: str(level),
+            })
+            elem = arr[i]
+            elem.import_text(text)
+            arr[i] = elem
+        actor.set_editor_property("StationsData", arr)
+        import json
+        actor.set_editor_property("StationsJson", json.dumps(LINE_STATIONS))
+        unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
 
 def main():
