@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.41";
-const APP_VERSION_DATE = "2026-05-30 14:00 +02:00";
+const APP_VERSION = "0.1.42";
+const APP_VERSION_DATE = "2026-05-30 14:23 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -5298,6 +5298,10 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
     throw new Error(`${uePayload.ref} hat keinen gültigen Bereich im markierten Rechteck.`);
   }
 
+  // Buffer von 50 m um die geclippten Route-Intervalle, damit Stationen knapp
+  // außerhalb des markierten Bereichs nicht verloren gehen (z. B. bei Linien die
+  // den Bereich nur streifen).
+  const AREA_STATION_BUFFER_M = 50;
   const selectedStations = allStations.filter((station) => {
     const start = Number(station.platform_start_m ?? station.dist_m);
     const end = Number(station.platform_end_m ?? station.dist_m);
@@ -5305,10 +5309,19 @@ function buildDatatablePayloads(uePayload, segmentRange = null, line = null) {
     const intervals = Array.isArray(segmentRange?.intervals) && segmentRange.intervals.length
       ? segmentRange.intervals
       : [{ fromM: segmentStartM, toM: segmentEndM }];
-    const overlapsSegment = intervals.some((interval) => end >= interval.fromM && start <= interval.toM);
-    const distanceInSegment = intervals.some((interval) => stationDist >= interval.fromM && stationDist <= interval.toM);
-    const stopInSelection = segmentRange?.bounds && stationInBounds(station, segmentRange.bounds);
-    return overlapsSegment || distanceInSegment || stopInSelection;
+    const overlapsSegment = intervals.some((interval) => {
+      const bufFrom = Math.max(0, interval.fromM - AREA_STATION_BUFFER_M);
+      const bufTo = interval.toM + AREA_STATION_BUFFER_M;
+      return end >= bufFrom && start <= bufTo;
+    });
+    const distanceInSegment = intervals.some((interval) => {
+      const bufFrom = Math.max(0, interval.fromM - AREA_STATION_BUFFER_M);
+      const bufTo = interval.toM + AREA_STATION_BUFFER_M;
+      return stationDist >= bufFrom && stationDist <= bufTo;
+    });
+    // Physische Position innerhalb (oder nahe) der Bereichsgrenzen
+    const stopInBounds = (segmentRange?.bounds || areaSelectionBounds) && stationInBounds(station, segmentRange?.bounds || areaSelectionBounds);
+    return overlapsSegment || distanceInSegment || stopInBounds;
   });
 
   const lineName = line ? transitLineLabel(line) : (uePayload?.ref || "");

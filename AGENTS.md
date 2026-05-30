@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.42 | 2026-05-30 14:23 +02:00 | Datatable-Export: 50m Buffer bei Station-Filterung in buildDatatablePayloads, damit Stationen knapp außerhalb der geclippten Route-Intervalle nicht verloren gehen. Zusätzlich fallback auf areaSelectionBounds für stopInBounds-Check.
 - 0.1.41 | 2026-05-30 14:00 +02:00 | readableTrafficSign erkennt jetzt 40+ deutsche Verkehrszeichen-Codes (DE:283 Halteverbot, DE:286 eingeschr. Halteverbot, DE:306 Vorfahrtsstraße, DE:274 Tempo, DE:267 Einfahrt verboten, DE:325 Spielstraße, DE:220 Einbahnstraße, DE:350 Fußgängerüberweg, etc.).
 - 0.1.39 | 2026-05-30 13:51 +02:00 | Erweiterte PRIORITY_KEYS im Tooltip um alle Laternen-Tags (lamp_mount, light:method, light:colour, light:count, support, manufacturer, etc.) und Baum-Tags (taxon, dbh, start_date, leaf_colour, tree:height, crown:height/width).
 - 0.1.37 | 2026-05-29 20:35 +02:00 | Fixes Overpass query to include `out body; >; out geom;` — was missing tags (only had geom).
