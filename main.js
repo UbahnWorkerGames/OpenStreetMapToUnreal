@@ -16,8 +16,8 @@ const TRANSIT_ROUTE_MODES = {
   bus: { label: "Bus", category: "bus" },
 };
 
-const APP_VERSION = "0.1.37";
-const APP_VERSION_DATE = "2026-05-29 20:35 +02:00";
+const APP_VERSION = "0.1.39";
+const APP_VERSION_DATE = "2026-05-30 13:51 +02:00";
 
 // ─── Karte ───────────────────────────────────────────────────────────────────
 
@@ -2243,7 +2243,11 @@ function buildAreaFeatureTooltip(feature) {
     "width", "lanes", "maxspeed", "oneway", "bridge", "tunnel", "layer",
     "ref", "operator",
     "addr:street", "addr:housenumber", "addr:city", "addr:postcode",
-    "traffic_sign", "lamp_type", "lit", "material", "colour",
+    "traffic_sign", "lamp_type", "lamp_mount", "light:method", "light:colour",
+    "light:count", "light:direction", "light:flux", "lamp_model", "light_source",
+    "support", "lit", "lit_by", "manufacturer", "material", "colour",
+    "tree", "tree:ref", "taxon", "dbh", "start_date", "leaf_colour",
+    "tree:height", "crown:height", "crown:width",
   ];
 
   const priority = [];

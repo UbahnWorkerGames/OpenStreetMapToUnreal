@@ -10,6 +10,7 @@
 
 ## Version Log
 
+- 0.1.39 | 2026-05-30 13:51 +02:00 | Erweiterte PRIORITY_KEYS im Tooltip um alle Laternen-Tags (lamp_mount, light:method, light:colour, light:count, support, manufacturer, etc.) und Baum-Tags (taxon, dbh, start_date, leaf_colour, tree:height, crown:height/width).
 - 0.1.37 | 2026-05-29 20:35 +02:00 | Fixes Overpass query to include `out body; >; out geom;` — was missing tags (only had geom).
 - 0.1.36 | 2026-05-29 20:29 +02:00 | "Alle →" button in options modal copies first non-empty BP path to all fields.
 - 0.1.35 | 2026-05-29 20:26 +02:00 | Tooltip now shows ALL OSM tags (priority-sorted first, rest alphabetically) — no more missing data.

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UEMap → PCG Graph-Traversal Analyse</title>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --muted: #8b949e; --red: #f85149; --green: #3fb950; --yellow: #d2991d; --blue: #58a6ff; --purple: #bc8cff; --accent: #f0883e; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 'Segoe UI', system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+  h1 { color: var(--accent); font-size: 1.8em; margin-bottom: 4px; }
+  h2 { color: var(--blue); font-size: 1.3em; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--text); font-size: 1.05em; margin: 20px 0 8px; }
+  .sub { color: var(--muted); font-size: 0.85em; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; }
+  .card.bad { border-left: 4px solid var(--red); }
+  .card.good { border-left: 4px solid var(--green); }
+  .card.warn { border-left: 4px solid var(--yellow); }
+  .verdict { padding: 20px; border-radius: 8px; margin: 24px 0; font-size: 1.05em; }
+  .verdict.yes { background: #0f2f1a; border: 1px solid var(--green); color: var(--green); }
+  .verdict.no { background: #2f0f0f; border: 1px solid var(--red); color: var(--red); }
+  .verdict.maybe { background: #2f2a0f; border: 1px solid var(--yellow); color: var(--yellow); }
+  code { background: #1c2333; padding: 1px 5px; border-radius: 3px; font-size: 0.92em; color: var(--purple); }
+  pre { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 14px; overflow-x: auto; font-size: 0.85em; line-height: 1.5; margin: 12px 0; }
+  ul, ol { padding-left: 24px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; font-size: 0.9em; }
+  th { background: #1c2333; color: var(--blue); }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78em; font-weight: 600; margin-right: 4px; }
+  .tag.red { background: #2f0f0f; color: var(--red); }
+  .tag.green { background: #0f2f1a; color: var(--green); }
+  .tag.yellow { background: #2f2a0f; color: var(--yellow); }
+  .tag.blue { background: #0f1f3f; color: var(--blue); }
+  .pipeline { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+  .pipeline span { background: #1c2333; padding: 6px 12px; border-radius: 4px; font-size: 0.82em; }
+  .pipeline .arrow { background: none; color: var(--muted); padding: 6px 2px; }
+  .score { font-size: 2em; font-weight: 800; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 260px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  .tldr { background: var(--card); border: 2px solid var(--accent); border-radius: 12px; padding: 24px; margin: 20px 0; }
+</style>
+</head>
+<body>
+
+<h1>UEMap → PCG Graph-Traversal: Machbarkeitsanalyse</h1>
+<p class="sub">Basierend auf Stand v0.1.37 (main.js, 6425 LOC) — 30. Mai 2026</p>
+
+<div class="tldr">
+  <h2 style="margin-top:0; border:none; padding:0; color:var(--accent)">⚡ TL;DR</h2>
+  <p><strong>Ja, prinzipiell machbar. Aber der einfachste Hebel ist NICHT das Graph-Traversal, sondern alle Splines in EIN PCG-Volume-Setup zu werfen.</strong> Das ist mit dem existierenden <code>buildAreaPcgSplines()</code>-Export schon 80% da — du brauchst nur das UE-seitige PCG-Graph-Setup. Der "Startpunkt → durchlaufen" Ansatz ist Overkill und löst ein Problem das du gar nicht hast.</p>
+</div>
+
+<h2>1. IST-Zustand: Wie Straßen heute exportiert werden</h2>
+
+<div class="pipeline">
+  <span>Overpass API</span> <span class="arrow">→</span>
+  <span>classifyAreaWay()</span> <span class="arrow">→</span>
+  <span>mergeCenterlines</span> <span class="arrow">→</span>
+  <span>stitchConnected</span> <span class="arrow">→</span>
+  <span>collapseToAxis</span> <span class="arrow">→</span>
+  <span>buildPythonSplineData</span> <span class="arrow">→</span>
+  <span>UE Python Script</span>
+</div>
+
+<div class="card">
+  <h3>Road Categories (classifyAreaWay)</h3>
+  <table>
+    <tr><th>OSM highway=</th><th>Category</th><th>Label</th></tr>
+    <tr><td>motorway, motorway_link, trunk, trunk_link</td><td><code>motorway</code></td><td>Autobahn</td></tr>
+    <tr><td>primary, primary_link, secondary, secondary_link</td><td><code>major_road</code></td><td>Hauptstrasse</td></tr>
+    <tr><td>tertiary, tertiary_link, unclassified, residential, living_street, road</td><td><code>city_road</code></td><td>Stadtstrasse</td></tr>
+    <tr><td>service</td><td><code>service</code></td><td>Service</td></tr>
+    <tr><td>cycleway, path (bicycle=designated)</td><td><code>cycleway</code></td><td>Radweg</td></tr>
+    <tr><td>footway, pedestrian, path</td><td><code>footway</code></td><td>Fußweg</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Merge/Stitch/Collapse Pipeline</h3>
+  <ol>
+    <li><strong>mergeAreaCenterlines():</strong> Gruppiert Features nach <code>category + name</code> (z.B. "city_road_hauptstrasse") und merged parallele Richtungsfahrbahnen zu einer Centerline — nur wenn sie nahe genug beieinander liegen (Road: ≤45m, Sonstige: ≤18m).</li>
+    <li><strong>stitchConnectedAreaFeatures():</strong> Verbindet Features derselben Kategorie+Name deren Endpunkte ≤35m (Export) auseinanderliegen. Iterativ bis keine Stitches mehr möglich.</li>
+    <li><strong>collapseAreaRoadGroupToAxis():</strong> Für Richtungsstraßen: ALLE Feature-Punkte einer Named-Group werden auf eine einzige Achse projiziert (PCA-ähnlich via roadAxisVector). Aus 2+ Richtungsfahrbahnen wird 1 Centerline.</li>
+  </ol>
+</div>
+
+<div class="card warn">
+  <h3>Aktuelle Schwachstelle: Kein echter Graph!</h3>
+  <p><code>stitchConnectedAreaFeatures()</code> verbindet nur Features <strong>derselben Kategorie UND desselben Namens</strong>. Das heißt:</p>
+  <ul>
+    <li>Autobahn (motorway) wird NIE mit Stadtstraße (city_road) verbunden</li>
+    <li>Service-Road ohne name wird NIE mit anderer Service-Road verbunden</li>
+    <li>Kreuzungen zwischen verschiedenen Straßentypen existieren NICHT im Datenmodell</li>
+  </ul>
+  <p>Du hast kein Straßennetz-Graph — du hast 1500 isolierte Spline-Stücke.</p>
+</div>
+
+<div class="card">
+  <h3>Datenvolumen (realistisch, Berliner Innenstadt ~3 km²)</h3>
+  <table>
+    <tr><th>Stage</th><th>Count</th><th>Details</th></tr>
+    <tr><td>Overpass Ways (Raw)</td><td>~2000-4000</td><td>Alle highway=* Ways im BBox</td></tr>
+    <tr><td>Nach classifyAreaWay</td><td>~1500-3000</td><td>Nur Ways mit Straßen-Tags (ohne buildings, trees, water, etc.)</td></tr>
+    <tr><td>Nach clipPolylineToBounds</td><td>~2000-4000</td><td>Ways in Teilsegmente zerlegt (mehrere Parts pro Way)</td></tr>
+    <tr><td>Nach merge + stitch + collapse + dedupe</td><td>~800-1500</td><td>Fertige Feature-Objekte</td></tr>
+    <tr><td>Spline-Export (UE Actors)</td><td>~500-1200</td><td>Nur AREA_SPLINE_CATEGORIES (gefiltert)</td></tr>
+    <tr><td>Punkt-Daten (PCG DataTable)</td><td>~5000-15000</td><td>Jeder Spline hat 5-30 Kontrollpunkte</td></tr>
+  </table>
+  <p><em>Die "5000" aus deiner Frage treffen eher die PCG DataTable-Zeilen (Punkte), nicht die Spline-Anzahl.</em></p>
+</div>
+
+<h2>2. Deine Idee: Startpunkt → PCG traversiert das Straßennetz</h2>
+
+<div class="card good">
+  <h3>Was du beschreibst</h3>
+  <p>Statt 1500 einzelner Spline-Actors in UE: Ein Startpunkt auf einer Autobahn, und PCG "wächst" von dort aus alle verbundenen Straßen als ein zusammenhängendes Konstrukt. Das Ergebnis ist <strong>1 Actor mit einem Graph-basierten Straßennetz</strong> statt 1500 Einzel-Actors.</p>
+</div>
+
+<h3>2.1. Was dafür nötig wäre — Graph-Extraktion (UEMap-Seite)</h3>
+
+<div class="card warn">
+  <h3>Intersection Detection</h3>
+  <p>Du musst ALLE Kreuzungspunkte zwischen ALLEN Straßen-Features finden, unabhängig von Kategorie/Name:</p>
+  <pre>// Pseudocode für Graph-Bau
+function buildRoadGraph(features) {
+  const graph = { nodes: new Map(), edges: [] };
+  
+  // Schritt 1: Alle Endpunkte sammeln
+  for (const feature of features) {
+    const start = feature.controlGeometry[0];
+    const end = feature.controlGeometry.at(-1);
+    
+    // Schritt 2: Endpunkte mit Toleranz matchen (z.B. 10m)
+    const startNode = findOrCreateNode(graph, start, 10);
+    const endNode = findOrCreateNode(graph, end, 10);
+    
+    // Schritt 3: Kante einfügen
+    graph.edges.push({
+      from: startNode, to: endNode,
+      category: feature.category,  // motorway, city_road, ...
+      name: feature.name,
+      geometry: feature.controlGeometry,  // Spline-Punkte
+      osmClass: feature.tags?.highway,
+      width: areaFeatureWidthM(feature),
+      oneway: feature.tags?.oneway === "yes",
+      // ... weitere Attribute
+    });
+  }
+  
+  // Schritt 4: Interior-Intersections finden
+  // Zwei Straßen können sich irgendwo in der Mitte kreuzen,
+  // nicht nur an den Endpunkten!
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i+1; j < edges.length; j++) {
+      const intersection = segmentIntersection(edges[i], edges[j]);
+      if (intersection) {
+        // Edge splitten, neuen Node an Kreuzung erstellen
+        splitEdgeAtIntersection(graph, i, j, intersection);
+      }
+    }
+  }
+  
+  return graph;
+}</pre>
+  <p>Das ist ein <strong>nicht-triviales Geometrie-Problem</strong>. Segment-Intersection-Tests für 1500 Features sind quadratisch (~1.1M Paare) — brauchst Spatial Index (R-Tree, Quadtree).</p>
+</div>
+
+<div class="card bad">
+  <h3>Realistische Probleme</h3>
+  <ul>
+    <li><strong>Unconnected Subgraphs:</strong> Viele Straßen enden im Nichts (Sackgassen, Feldwege ohne Verbindung). Dein "von einem Startpunkt aus alles traversieren"-Ansatz erreicht nur die Zusammenhangskomponente des Startknotens — 30-50% der Straßen bleiben unerreicht.</li>
+    <li><strong>Tolerance-Handling:</strong> Welcher Abstand zählt als "verbunden"? 5m? 15m? Verschiedene Straßentypen haben verschiedene physische Kreuzungs-Geometrien. Falsche Toleranz → falsche Verbindungen oder fehlende Verbindungen.</li>
+    <li><strong>Overpass-Datenqualität:</strong> OSM-Ways sind an Kreuzungen oft nicht exakt verbunden. Zwei Ways die sich im echten Leben kreuzen, teilen in OSM nicht immer einen Node. Du musst geometrisch mergen.</li>
+    <li><strong>Brücken/Tunnel:</strong> Eine Autobahn kreuzt eine Stadtstraße — physisch verbunden (Brücke) oder nicht? <code>tags.layer</code>, <code>tags.bridge</code>, <code>tags.tunnel</code> müssen berücksichtigt werden.</li>
+  </ul>
+</div>
+
+<h3>2.2. Was dafür nötig wäre — PCG-Seite (Unreal Engine)</h3>
+
+<div class="card">
+  <h3>Varianten für PCG-Integration</h3>
+  
+  <h4>Variante A: "Dumme" Spline-Liste in PCG (80% Lösung, existiert fast)</h4>
+  <p>Exportiere ALLE Splines als PCG DataTable (was <code>buildAreaPcgSplines()</code> heute schon tut). Ein PCG Volume + Spline Sampler + Mesh Spawner generiert alle Straßen-Meshes. Kein Graph-Traversal nötig. Vorteil: 1 PCG Actor statt 1500 BP Actors.</p>
+  
+  <h4>Variante B: Graph-JSON + Custom PCG Element (100% Lösung, viel Arbeit)</h4>
+  <p>Exportiere den Graph als JSON (Nodes + Edges). In UE: Custom PCG Element (C++ oder Blueprint) das den Graph traversiert und Straßen-Meshes generiert. Ermöglicht echtes "von Punkt A nach B das Netz aufspannen".</p>
+  
+  <h4>Variante C: Hybrid — Splines mit Connectivity-Metadaten (90% Lösung)</h4>
+  <p>Jeder Spline bekommt im Export zusätzliche Felder: <code>ConnectedTo: ["spline_key_1", "spline_key_2"]</code>. PCG kann dann an Kreuzungen saubere Übergänge spawnen ohne den ganzen Graph traversieren zu müssen.</p>
+</div>
+
+<h2>3. Ehrliche, knallharte Meinung</h2>
+
+<div class="verdict maybe">
+  <strong>⚠️ Technisch machbar, aber: Du optimierst das falsche Problem.</strong>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="card good">
+      <h3>Was diese Idee LÖST</h3>
+      <ul>
+        <li>✅ Weniger Actors in UE (1500 → 1 PCG Volume)</li>
+        <li>✅ Sauberere Kreuzungen (PCG kann Übergänge zwischen Straßen meshen)</li>
+        <li>✅ Bessere Performance im Editor (Outliner hat nicht 1500 Einträge)</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card bad">
+      <h3>Was diese Idee NICHT löst</h3>
+      <ul>
+        <li>❌ Straßen sind immer noch diskrete Segmente — nur halt in einem Graph statt in 1500 Actors</li>
+        <li>❌ Performance zur Laufzeit: PCG muss Geometrie generieren, ist nicht unbedingt schneller</li>
+        <li>❌ Der Graph-Traversal-Aspekt ("von Startpunkt aus wachsen") bringt keinen Mehrwert wenn eh alle Straßen im Volume sind</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="card warn">
+  <h3>Das EIGENTLICHE Problem</h3>
+  <p>Dein Problem ist nicht "5000 Actors sind zu viele". Dein Problem ist: <strong>Jeder Actor ist ein dünner Spline, und du willst daraus realistische Straßen mit Breite, Markierungen, Bürgersteigen, Kreuzungen machen.</strong></p>
+  <p>Das löst PCG — aber du brauchst NICHT den Graph-Traversal-Teil dafür. PCG mit Spline-Daten als Input reicht völlig. Die Frage ist nur: Wie gut kann dein PCG-Graph die Straßengeometrie aus den Spline-Daten generieren?</p>
+</div>
+
+<h2>4. Konkrete Umsetzungs-Empfehlung</h2>
+
+<div class="card good">
+  <h3>Phase 1: PCG "Dumb Mode" (2-3 Tage Aufwand)</h3>
+  <ol>
+    <li><strong>Export verbessern:</strong> <code>buildAreaPcgSplines()</code> liefert heute schon Spline-Punkte als DataTable-Zeilen. Füge pro Zeile hinzu: <code>SplineLength</code>, <code>SplineWidth</code>, <code>RoadType</code>, <code>IsBridge</code>, <code>IsTunnel</code>.</li>
+    <li><strong>UE PCG Graph bauen:</strong>
+      <ul>
+        <li>PCG Volume → Get Spline Data (from DataTable) → Spline Sampler → Mesh Spawner</li>
+        <li>Pro RoadType unterschiedliche Meshes (Autobahn breit + Leitplanke, Stadtstraße schmal + Bordstein)</li>
+        <li>An Kreuzungen: Spline-Endpunkte mergen (Point Cloud → Density Filter → Static Mesh Spawner für Kreuzungs-Plates)</li>
+      </ul>
+    </li>
+    <li><strong>Testen:</strong> Funktioniert das Mesh-Generieren aus Spline-Daten? Wie sieht die Qualität aus?</li>
+  </ol>
+  <p><span class="tag green">Das ist der schnelle Win.</span> Wenn das schon gut aussieht, brauchst du Phase 2+3 gar nicht.</p>
+</div>
+
+<div class="card">
+  <h3>Phase 2: Intersection Detection (3-5 Tage)</h3>
+  <ol>
+    <li>R-Tree/Spatial-Index in main.js für schnelle Segment-Intersection-Tests</li>
+    <li>Alle Straßen-Spline-Paare auf Kreuzungen prüfen</li>
+    <li>An Kreuzungen: Splines splitten, Node-IDs vergeben, Connectivity-Metadaten speichern</li>
+    <li>Export-Format: <code>{ nodes: [...], edges: [...] }</code> statt flacher Spline-Liste</li>
+  </ol>
+</div>
+
+<div class="card bad">
+  <h3>Phase 3: Custom PCG Graph Element (5-10 Tage)</h3>
+  <ol>
+    <li>C++ PCG Element das den Graph-JSON einliest</li>
+    <li>Traversal-Logik: Von Seed-Node(s) aus BFS über den Graph</li>
+    <li>Pro Edge: Spline generieren, Mesh spawnen, an Nodes: Kreuzungs-Meshes</li>
+    <li>Road-Hierarchy: Motorway-Kanten priorisieren, nur verbundene subgraphs rendern</li>
+  </ol>
+  <p><span class="tag red">Das ist der teure Teil.</span> Erst machen wenn Phase 1+2 nicht reichen.</p>
+</div>
+
+<h2>5. Kann man das mit Coding Agents bauen?</h2>
+
+<div class="verdict yes">
+  <strong>✅ JA — aber nicht am Stück. Iterativ, Phase für Phase.</strong>
+</div>
+
+<div class="card">
+  <h3>Was Coding Agents GUT können (für dieses Projekt)</h3>
+  <ul>
+    <li><strong>Phase 1 (PCG "Dumb Mode"):</strong> Perfekt. DataTable-Format erweitern, UE PCG Graph per Python/PythonScript bauen. Das ist stupide Fleißarbeit — genau was Agents gut machen.</li>
+    <li><strong>Phase 2 (Intersection Detection):</strong> Agents können den R-Tree einbauen, Segment-Intersection-Mathe implementieren. ABER: Du musst die Toleranz-Parameter selber kalibrieren (5m? 15m?). Ein Agent rät nur.</li>
+    <li><strong>Phase 3 (Custom PCG Element):</strong> Agents können C++ Boilerplate generieren, aber das Debuggen im UE-Editor ist HANDARBEIT. Kein Agent kann den UE-Editor bedienen oder visuell prüfen ob die Kreuzungen gut aussehen.</li>
+  </ul>
+</div>
+
+<div class="card bad">
+  <h3>Was Coding Agents NICHT können</h3>
+  <ul>
+    <li><strong>Visuelle Qualitätskontrolle:</strong> "Sieht die Kreuzung gut aus?" — kann kein Agent beantworten. Du musst in UE reinschauen.</li>
+    <li><strong>UE-spezifisches Debugging:</strong> PCG Graph crasht, Splines sind kaputt, Mesh sieht falsch aus — der Agent kann nicht den UE-Editor inspizieren.</li>
+    <li><strong>Parameter-Tuning:</strong> Toleranzen, Road-Widths, Mesh-Offsets — trial and error. Agent kann Werte vorschlagen aber nicht testen.</li>
+    <li><strong>Komplexe Geometrie-Debugging:</strong> Wenn die Intersection-Detection bei einer bestimmten Straßenkonfiguration falsch liegt, findest du das nur durch visuelle Inspektion im UEMap-UI.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Recommended Agent-Workflow</h3>
+  <ol>
+    <li><strong>Ein Agent pro Phase</strong>, nicht ein Monster-Agent für alles.</li>
+    <li><strong>Agent macht den Code</strong> → du testest visuell → Agent fixt basierend auf deinem Feedback.</li>
+    <li><strong>Jede Iteration committen</strong> (machst du ja schon mit Git-First). So kannst du "Scheiße, das war vorher besser" immer zurückspielen.</li>
+    <li><strong>Phase 1 zuerst fertigstellen und deployen</strong> bevor du Phase 2 anfängst. Wenn Phase 1 schon "gut genug" ist — hör auf.</li>
+  </ol>
+</div>
+
+<hr>
+
+<h2>Finale Zusammenfassung</h2>
+
+<table>
+  <tr><th>Aspekt</th><th>Bewertung</th><th>Score</th></tr>
+  <tr>
+    <td>Technische Machbarkeit (Graph-Traversal)</td>
+    <td>Ja, aber aufwändig. ~2-3 Wochen Vollzeit</td>
+    <td><span class="score" style="color:var(--yellow)">6/10</span></td>
+  </tr>
+  <tr>
+    <td>Technische Machbarkeit (PCG Dumb Mode)</td>
+    <td>Trivial. Existiert fast schon. 2-3 Tage</td>
+    <td><span class="score" style="color:var(--green)">9/10</span></td>
+  </tr>
+  <tr>
+    <td>Nutzen von Graph-Traversal vs. Dumb Mode</td>
+    <td>Marginal. PCG sampled eh alle Splines im Volume</td>
+    <td><span class="score" style="color:var(--red)">3/10</span></td>
+  </tr>
+  <tr>
+    <td>Mit Coding Agents umsetzbar</td>
+    <td>Ja, iterativ. Du musst visuell testen</td>
+    <td><span class="score" style="color:var(--green)">7/10</span></td>
+  </tr>
+  <tr>
+    <td>1 verbundenes Konstrukt statt 5000 Actors</td>
+    <td>Erreichbar via PCG — aber Graph-Traversal ist der falsche Weg dahin</td>
+    <td><span class="score" style="color:var(--yellow)">5/10</span></td>
+  </tr>
+</table>
+
+<div class="card good">
+  <h3>🏆 Meine Empfehlung</h3>
+  <p><strong>Bau Phase 1 (PCG Dumb Mode) zuerst.</strong> Du hast 80% des Codes schon. Exportiere die Splines als PCG DataTable, bau einen PCG Graph in UE der daraus Straßen mesht. Wenn das Ergebnis scheiße aussieht, brauchst du Phase 2+3. Wenn es gut aussieht — Glückwunsch, du hast in 2-3 Tagen erreicht was du wolltest, ohne den Graph-Traversal-Irrsinn.</p>
+  <p><strong>Der "Startpunkt → Straßen wachsen" Teil der Idee ist cool aber overengineered.</strong> PCG verarbeitet von Natur aus ALLES im Volume — du brauchst kein Traversal um "alles zu erreichen". Das einzige Szenario wo Traversal Sinn macht: Du willst nur einen Teil des Netzes rendern (z.B. "zeig mir alle Straßen die von dieser Autobahn aus erreichbar sind"). Aber willst du das wirklich?</p>
+</div>
+
+<p style="text-align:center; color:var(--muted); margin-top:40px; font-size:0.8em;">
+  Analyse erstellt am 30. Mai 2026 · UEMap v0.1.37 · 6425 LOC main.js<br>
+  Datei: <code>C:\Users\stefa\Documents\GitHub\UEMap\pcg-graph-analyse.html</code>
+</p>
+
+</body>
+</html>
