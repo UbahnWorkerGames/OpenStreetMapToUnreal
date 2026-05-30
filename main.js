@@ -5232,6 +5232,12 @@ function encodeTransitLine(line) {
   return `${line.route}:${line.ref}`;
 }
 
+function decodeTransitLine(encoded) {
+  const idx = encoded.indexOf(":");
+  if (idx < 0) return { route: "subway", ref: encoded };
+  return { route: encoded.slice(0, idx), ref: encoded.slice(idx + 1) };
+}
+
 function transitLineLabel(line) {
   return `${TRANSIT_ROUTE_MODES[line.route]?.label || line.route} ${line.ref}`;
 }
