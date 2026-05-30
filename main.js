@@ -4849,6 +4849,22 @@ def _apply_map_texture(mesh_component):
     unreal.log("[INFO] Ground plane map texture applied")
 
 
+def _fill_struct_template(template, values):
+    """values: {pos: wert_string}"""
+    entries = re.findall(r'([\\w]+?)=("[^"]*"|[(][^)]*[)]|[-\\d.]+)', template)
+    parts = []
+    last_end = 0
+    for idx, m in enumerate(re.finditer(r'([\\w]+?)=("[^"]*"|[(][^)]*[)]|[-\\d.]+)', template)):
+        parts.append(template[last_end:m.start()])
+        if idx in values:
+            parts.append(f"{m.group(1)}={values[idx]}")
+        else:
+            parts.append(m.group(0))
+        last_end = m.end()
+    parts.append(template[last_end:])
+    return "".join(parts)
+
+
 def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
@@ -4877,8 +4893,10 @@ def main():
 
     # Transit line stations auf den ersten Street-Actor schreiben
     if LINE_STATIONS:
+        import json as _json
         first_actor = next((a for a in unreal.EditorLevelLibrary.get_all_level_actors() if a.get_actor_label().startswith("CITY_STREET")), None)
         if first_actor:
+            first_actor.modify()
             arr = first_actor.get_editor_property("StationsData")
             if arr is not None:
                 arr.resize(len(LINE_STATIONS))
@@ -4902,6 +4920,7 @@ def main():
                     elem.import_text(text)
                     arr[i] = elem
                 first_actor.set_editor_property("StationsData", arr)
+                first_actor.set_editor_property("StationsJson", _json.dumps(LINE_STATIONS))
                 unreal.log_warning(f"[TRANSIT] StationsData auf CITY_STREET-Actor: {len(LINE_STATIONS)} Stationen")
 
 
