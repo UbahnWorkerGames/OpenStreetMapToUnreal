@@ -4850,8 +4850,6 @@ def _apply_map_texture(mesh_component):
 
 
 LINE_TEMPLATE_BP = "/Game/_UbahnWorkerGames/TEST/BP_CityTest"
-LINE_OUTPUT_BASE = "/Game/_UbahnWorkerGames/Transit"
-
 def _fill_struct_template(template, values):
     """values: {pos: wert_string}"""
     entries = re.findall(r'([\w]+?)=("[^"]*"|[(][^)]*[)]|[-\d.]+)', template)
@@ -4870,35 +4868,30 @@ def _fill_struct_template(template, values):
 def _create_transit_bp():
     unreal.log_warning(f"[TRANSIT] LINE_STATIONS={len(LINE_STATIONS)}, LINE_ROUTE={len(LINE_ROUTE)}, MODE={LINE_MODE}, REF={LINE_REF}")
     if not LINE_STATIONS:
-        unreal.log_warning("[TRANSIT] Keine Stationsdaten - überspringe")
-        return
-    output_path = f"{LINE_OUTPUT_BASE}/{LINE_MODE.upper()}/{LINE_REF}/BP_{LINE_REF}"
-    unreal.log_warning(f"[TRANSIT] Erstelle {output_path}")
-
-    if unreal.EditorAssetLibrary.does_asset_exist(output_path):
-        unreal.EditorAssetLibrary.delete_asset(output_path)
-
-    # Ordner anlegen falls nötig
-    folder = "/".join(output_path.split("/")[:-1])
-    unreal.EditorAssetLibrary.make_directory(folder)
-
-    unreal.EditorAssetLibrary.duplicate_asset(LINE_TEMPLATE_BP, output_path)
-    new_bp = unreal.load_asset(output_path)
-    if not new_bp:
-        unreal.log_error(f"[TRANSIT] Konnte BP nicht laden: {output_path}")
+        unreal.log_warning("[TRANSIT] Keine Stationsdaten - uberspringe")
         return
 
-    bp_class = new_bp.generated_class()
-    cdo = unreal.get_default_object(bp_class)
+    label = f"TRANSIT_{LINE_MODE}_{LINE_REF}"
+    # Alte Instanzen loschen
+    for actor in unreal.EditorLevelLibrary.get_all_level_actors():
+        if actor.get_actor_label().startswith("TRANSIT_"):
+            unreal.EditorLevelLibrary.destroy_actor(actor)
+
+    # Spawn wie die Street-Splines
+    bp_class = unreal.EditorAssetLibrary.load_blueprint_class(LINE_TEMPLATE_BP)
+    if not bp_class:
+        bp_class = unreal.load_class(LINE_TEMPLATE_BP)
+    actor = unreal.EditorLevelLibrary.spawn_actor_from_class(bp_class, unreal.Vector(0, 0, 500))
+    actor.set_actor_label(label)
 
     # Spline
     spline_comp = None
-    for comp in cdo.get_components_by_class(unreal.SplineComponent):
+    for comp in actor.get_components_by_class(unreal.SplineComponent):
         if comp.get_name() in ("StreetSpline", "Spline"):
             spline_comp = comp
             break
     if not spline_comp:
-        comps = cdo.get_components_by_class(unreal.SplineComponent)
+        comps = actor.get_components_by_class(unreal.SplineComponent)
         if comps:
             spline_comp = comps[0]
     if spline_comp and LINE_ROUTE:
@@ -4911,11 +4904,9 @@ def _create_transit_bp():
             )
         unreal.log_warning(f"[TRANSIT] Spline: {len(LINE_ROUTE)} Punkte")
 
-    # StationsData
-    arr = cdo.get_editor_property("StationsData")
-    unreal.log_warning(f"[TRANSIT] StationsData CDO: {type(arr).__name__ if arr is not None else 'None'} LEN={len(arr) if arr is not None and arr else 0}")
+    # StationsData auf dem Actor setzen
+    arr = actor.get_editor_property("StationsData")
     if arr is not None and len(LINE_STATIONS) > 0:
-        cdo.modify()
         arr.resize(len(LINE_STATIONS))
         for i, st in enumerate(LINE_STATIONS):
             name   = str(st.get("name", ""))
@@ -4937,21 +4928,13 @@ def _create_transit_bp():
             elem = arr[i]
             elem.import_text(text)
             arr[i] = elem
-        cdo.set_editor_property("StationsData", arr)
+        actor.set_editor_property("StationsData", arr)
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
-    # CDO → Blueprint class defaults übertragen
-    # BP + CDO als modifiziert markieren, dann speichern
-    new_bp.modify()
-    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
-    # Verify
-    bp_class2 = unreal.load_asset(output_path).generated_class()
-    verify = unreal.get_default_object(bp_class2).get_editor_property("StationsData")
-    unreal.log_warning(f"[TRANSIT] Nach Save: StationsData LEN={len(verify) if verify else 0}")
-    unreal.log_warning(f"[TRANSIT] Fertig: {output_path}")
+    unreal.log_warning(f"[TRANSIT] Fertig: {label}")
 
 
-def main():
+def main():def main():
     bp_class_cache = {}
     # Clean up previous imports so duplicate labels cannot accumulate
     destroy_existing_actor_with_prefix(BUILDING_ACTOR_LABEL_PREFIX)
