@@ -6509,6 +6509,14 @@ document.getElementById("datatable-line-all")?.addEventListener("change", (event
   }
   syncDatatableLineAllCheckbox();
 });
+// Linie laden Button — lädt die erste selektierte Linie von Overpass
+document.getElementById("btn-load-transit-line")?.addEventListener("click", async () => {
+  const checked = [...document.querySelectorAll("#datatable-line-list input[data-datatable-line]:checked")];
+  if (!checked.length) { setStatus("Erst eine Linie in der Export-Liste anhaken.", true); return; }
+  const line = decodeTransitLine(checked[0].value);
+  setStatus(`Lade ${transitLineLabel(line)} …`);
+  await importFromOverpass(line.ref, line.route);
+});
 initAreaBpPathInputs();
 document.getElementById("btn-bp-apply-all")?.addEventListener("click", applyFirstBpPathToAll);
 
