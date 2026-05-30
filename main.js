@@ -4888,7 +4888,6 @@ def _create_transit_bp():
         unreal.log_error(f"[TRANSIT] Konnte BP nicht laden: {output_path}")
         return
 
-    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)  # force compile
     bp_class = new_bp.generated_class()
     cdo = unreal.get_default_object(bp_class)
 
@@ -4941,10 +4940,10 @@ def _create_transit_bp():
         cdo.set_editor_property("StationsData", arr)
         unreal.log_warning(f"[TRANSIT] StationsData: {len(LINE_STATIONS)} Stationen")
 
-    # Verify after save
+    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
+    # Verify
     verify = unreal.get_default_object(new_bp.generated_class()).get_editor_property("StationsData")
     unreal.log_warning(f"[TRANSIT] Nach Save: StationsData LEN={len(verify) if verify else 0}")
-    unreal.EditorAssetLibrary.save_loaded_asset(new_bp)
     unreal.log_warning(f"[TRANSIT] Fertig: {output_path}")
 
 
